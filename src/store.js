@@ -4,6 +4,11 @@ const CACHE_KEY = 'profileCache';
 const SETTINGS_KEY = 'settings';
 const SNAPSHOT_KEY = 'pendingSnapshot';
 
+// Ids accepted or rejected this session, by either the panel or the on-page
+// banner. Both watch this key, which is how the two views stay consistent
+// without messaging each other directly. Mirrored in banner.js — keep in sync.
+export const HANDLED_KEY = 'handledIds';
+
 export const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export const DEFAULT_SETTINGS = {
@@ -78,7 +83,26 @@ export async function saveSnapshot(snapshot) {
 
 export async function clearSnapshot() {
   try {
-    await chrome.storage.session.remove(SNAPSHOT_KEY);
+    await chrome.storage.session.remove([SNAPSHOT_KEY, HANDLED_KEY]);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function loadHandledIds() {
+  try {
+    const stored = await chrome.storage.session.get(HANDLED_KEY);
+    return new Set(stored[HANDLED_KEY] || []);
+  } catch {
+    return new Set();
+  }
+}
+
+export async function addHandledId(id) {
+  try {
+    const handled = await loadHandledIds();
+    handled.add(id);
+    await chrome.storage.session.set({ [HANDLED_KEY]: [...handled] });
   } catch {
     /* ignore */
   }

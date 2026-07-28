@@ -249,8 +249,23 @@ async function runHydrationBatch() {
 function markDone(id, verb) {
   state.doneIds.add(id);
   state.selected.delete(id);
+  // Shared with the on-page banner so it stops offering this profile.
+  store.addHandledId(id);
   renderer.markRow(id, verb === 'approve' ? 'accepted' : 'rejected', verb === 'approve' ? 'Accepted' : 'Rejected');
   setTimeout(() => renderer.removeRow(id), 700);
+}
+
+/** Rows the banner handled while the panel was open. */
+function absorbHandledIds(ids) {
+  let changed = false;
+  for (const id of ids) {
+    if (state.doneIds.has(id)) continue;
+    state.doneIds.add(id);
+    state.selected.delete(id);
+    renderer.removeRow(id);
+    changed = true;
+  }
+  if (changed) recompute();
 }
 
 async function actOnce(id, verb) {
@@ -417,6 +432,13 @@ function bind() {
   });
 
   $('banner-dismiss').addEventListener('click', hideBanner);
+
+  // The on-page banner writes handled ids to session storage; mirror them so
+  // a profile accepted on the page disappears from the list here too.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'session' || !changes[store.HANDLED_KEY]) return;
+    absorbHandledIds(changes[store.HANDLED_KEY].newValue || []);
+  });
 
   // An in-flight action queue is doing irreversible writes; make closing the
   // panel mid-run a deliberate act rather than an accident.

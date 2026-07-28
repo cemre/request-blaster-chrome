@@ -143,6 +143,16 @@ const OPERATIONS = {
   },
 };
 
+// banner.js runs in the same isolated world and needs to make the same
+// authenticated calls, so the operation table is shared here rather than
+// duplicated.
+window.__requestBlaster = window.__requestBlaster || {};
+window.__requestBlaster.call = (op, args = {}) => {
+  const operation = OPERATIONS[op];
+  if (!operation) return Promise.resolve({ ok: false, error: `unknown op: ${op}` });
+  return operation(args).catch((err) => ({ ok: false, status: 0, error: String(err) }));
+};
+
 // This file arrives two ways: the manifest's content_scripts declaration on
 // navigation, and chrome.scripting.executeScript when the panel finds a tab
 // that predates the extension. Both can land in the same frame, and a second

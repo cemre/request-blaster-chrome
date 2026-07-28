@@ -6,10 +6,18 @@
 // when Chrome tears the worker down after 30s of idle.
 
 const IG_MATCH = '*://*.instagram.com/*';
+const CONTENT_FILES = ['content.js', 'banner.js'];
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((err) => console.error('[Request Blaster] setPanelBehavior failed:', err));
+
+// session storage defaults to TRUSTED_CONTEXTS, which excludes content
+// scripts. The profile banner reads the same cached pending list and handled
+// ids as the panel, so it needs in.
+chrome.storage.session
+  .setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' })
+  .catch((err) => console.error('[Request Blaster] setAccessLevel failed:', err));
 
 /**
  * A `content_scripts` declaration only injects on navigation. Tabs that were
@@ -29,7 +37,7 @@ async function injectIntoOpenTabs() {
   for (const tab of tabs) {
     if (tab.id === undefined) continue;
     try {
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: CONTENT_FILES });
     } catch {
       // Discarded tabs and error pages can't be scripted. The panel retries
       // injection on demand anyway, so this is not worth surfacing.

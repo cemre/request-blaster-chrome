@@ -23,8 +23,28 @@ navigation. The extension injects into them explicitly on install and again on
 demand when the panel can't reach a tab, so you shouldn't need to reload
 anything by hand.
 
-There is no on-page banner. All interaction happens in the side panel; that is
-the whole point of the design.
+## On-page banner
+
+Profile pages of pending requesters get Accept/Reject buttons injected directly
+beneath Instagram's own Follow button, plus a `Pending request · N of 200`
+line. Deliberately minimal — it acts on the profile in front of you and nothing
+else; sequencing stays in the side panel.
+
+It works with the panel closed: `banner.js` reads the same cached pending list
+and fetches one itself if there isn't one. Acting in either view updates the
+other, via a `handledIds` list in session storage that both watch — no direct
+messaging between them.
+
+Styling comes from Instagram's own CSS custom properties (`--ig-primary-button`
+and friends, published on `:root` as `R, G, B` triples). Custom properties
+inherit through shadow boundaries, so the buttons match Instagram's light and
+dark themes with no theme detection. Verified pixel-identical to the real
+Follow button: `rgb(74, 93, 249)`, 44px tall, 12px radius, 14px/600.
+
+The insertion point is found via semantic markup — the direct child of
+`<header>` containing a button labelled Follow/Following/Message — never
+Instagram's generated class names. If that ever stops matching, the banner
+falls back to a floating bar rather than disappearing.
 
 ## How it works
 

@@ -68,7 +68,10 @@ async function waitForContentScript(id) {
     // content.js guards against running twice.
     if (attempt === 2) {
       try {
-        await chrome.scripting.executeScript({ target: { tabId: id }, files: ['content.js'] });
+        await chrome.scripting.executeScript({
+          target: { tabId: id },
+          files: ['content.js', 'banner.js'],
+        });
         if (await pingOnce(id)) return true;
       } catch {
         // Restricted page, or the scripting permission was declined.
