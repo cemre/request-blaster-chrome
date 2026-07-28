@@ -46,6 +46,12 @@ The insertion point is found via semantic markup — the direct child of
 Instagram's generated class names. If that ever stops matching, the banner
 falls back to a floating bar rather than disappearing.
 
+Width is measured, not assumed. That section is not always as wide as the
+buttons inside it — Instagram's narrow layout insets them — so the banner
+measures the bounding box of the real buttons and sets its own margins to
+match, realigning on resize and on every tick. No breakpoints to keep in sync
+with Instagram's.
+
 ## How it works
 
 - **`content.js`** — stateless proxy. Scrapes the CSRF token from
