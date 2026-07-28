@@ -5,7 +5,7 @@
 // textContent, never innerHTML — usernames and bios are attacker-controlled.
 
 import { ACTION_LABELS, groupByDay } from './history.js';
-import { formatCount } from './model.js';
+import { formatCount, formatMutuals } from './model.js';
 import { PLACEHOLDER, resolveAvatar } from './avatars.js';
 
 const PAGE_SIZE = 60;
@@ -180,13 +180,7 @@ export class ListRenderer {
       main.appendChild(openTarget('button', 'row-name link-button', row.fullName, openLabel));
     }
 
-    const stats = [];
-    const noun = row.mutuals === 1 ? 'mutual' : 'mutuals';
-    // Before hydration the count comes from Instagram's "Followed by …" string,
-    // so it is an estimate. The tilde says so without needing a legend; a count
-    // of zero is exact either way.
-    const prefix = row.enriched || row.mutuals === 0 ? '' : '~';
-    stats.push(`${prefix}${row.mutuals} ${noun}`);
+    const stats = [formatMutuals(row)];
     if (row.enriched) {
       stats.push(`${formatCount(row.followers)} followers`);
       stats.push(`${formatCount(row.posts)} posts`);

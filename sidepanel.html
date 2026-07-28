@@ -37,8 +37,9 @@
 
     <label class="select-chip">
       <span>Mutuals</span>
-      <select id="f-mutuals">
+      <select id="f-mutuals" title="&quot;none&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals.">
         <option value="0">any</option>
+        <option value="none">none (loaded rows)</option>
         <option value="1">1+</option>
         <option value="5">5+</option>
         <option value="10">10+</option>
@@ -69,8 +70,6 @@
         <label class="popover-check"><input type="checkbox" id="f-zero-posts"><span>0 posts</span></label>
         <label class="popover-check"><input type="checkbox" id="f-empty-bio"><span>Empty bio</span></label>
         <label class="popover-check"><input type="checkbox" id="f-bot-ratio"><span>Bot ratio</span></label>
-
-        <p id="enriched-warning" class="warning" hidden></p>
       </div>
     </div>
 
@@ -83,6 +82,11 @@
   </div>
 
   <input id="search" type="search" class="search" placeholder="Search username or name" autocomplete="off" hidden>
+
+  <!-- Outside the Spam popover on purpose: Mutuals "none" is also an
+       enriched-only filter, and its caveat must not be hidden behind a
+       control the user may never open. -->
+  <p id="enriched-warning" class="warning" hidden></p>
 </section>
 
 <section class="result-bar">

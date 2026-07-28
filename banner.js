@@ -160,13 +160,16 @@
        hidden element still lays out — an empty grey bar under the buttons. */
     [hidden] { display: none !important; }
     .wrap {
-      display: flex; gap: 8px; align-items: stretch;
+      display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap;
       font-family: system-ui, -apple-system, sans-serif;
       margin: 8px 0 0;
     }
+    /* Equal thirds when there is room, but min-content stops a label being
+       squeezed narrower than its own text — three buttons under a narrow
+       header wrap to a second line instead of overflowing. */
     button {
-      flex: 1 1 0; min-width: 0;
-      height: 44px; padding: 13px 20px;
+      flex: 1 1 0; min-width: min-content;
+      height: 44px; padding: 13px 16px; white-space: nowrap;
       font-family: inherit; font-size: 14px; line-height: 18px; font-weight: 600;
       border: 0; border-radius: 12px; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
@@ -177,6 +180,16 @@
       color: rgb(var(--ig-primary-button-text, 255, 255, 255));
     }
     .accept:hover:not(:disabled) { background: rgb(var(--ig-primary-button-hover, 65, 80, 247)); }
+    /* Same family as Accept — it is an accept with a follow tacked on — but
+       outlined, so the plain Accept stays the obvious default. */
+    .accept-follow {
+      background: transparent;
+      color: rgb(var(--ig-primary-button, 74, 93, 249));
+      box-shadow: inset 0 0 0 1.5px rgb(var(--ig-primary-button, 74, 93, 249));
+    }
+    .accept-follow:hover:not(:disabled) {
+      background: rgba(var(--ig-primary-button, 74, 93, 249), 0.08);
+    }
     .reject {
       background: rgb(var(--ig-secondary-button-background, 239, 239, 239));
       color: rgb(var(--ig-secondary-button, 38, 38, 38));
@@ -213,6 +226,7 @@
       <style>${STYLES}</style>
       <div class="wrap">
         <button class="accept" type="button">Accept</button>
+        <button class="accept-follow" type="button">Accept + follow</button>
         <button class="reject" type="button">Reject</button>
       </div>
       <div class="status" hidden></div>
@@ -290,45 +304,81 @@
 
     const wrap = shadow.querySelector('.wrap');
     const status = shadow.querySelector('.status');
-    const accept = shadow.querySelector('.accept');
-    const reject = shadow.querySelector('.reject');
+    const buttons = [...shadow.querySelectorAll('.wrap button')];
 
     wrap.hidden = false;
     status.hidden = true;
-    accept.disabled = false;
-    reject.disabled = false;
+    for (const button of buttons) button.disabled = false;
 
     // Not social_context: Instagram already renders its own "Followed by …"
     // line in the header just above, and the two disagree on names and count.
     shadow.querySelector('.meta').textContent = `Pending request · ${position} of ${total}`;
 
+    const setMeta = (text) => { shadow.querySelector('.meta').textContent = text; };
+
+    const fail = (result) => {
+      wrap.hidden = false;
+      status.hidden = true;
+      for (const button of buttons) button.disabled = false;
+      setMeta(result?.blocked
+        ? 'Instagram is rate limiting — wait a while before retrying.'
+        : `Failed: ${result?.error || 'unknown error'}`);
+    };
+
     const act = (op, doneLabel, busyLabel, logged) => async () => {
-      accept.disabled = true;
-      reject.disabled = true;
+      for (const button of buttons) button.disabled = true;
       status.hidden = false;
       status.textContent = busyLabel;
       wrap.hidden = true;
 
       const result = await window.__requestBlaster.call(op, { userId: String(user.pk) });
+      if (!result?.ok) return fail(result);
 
-      if (result?.ok) {
-        await markHandled(String(user.pk));
-        await logAction(user, logged);
-        status.textContent = doneLabel;
-        shadow.querySelector('.meta').textContent = '';
+      await markHandled(String(user.pk));
+      await logAction(user, logged);
+      status.textContent = doneLabel;
+      setMeta('');
+    };
+
+    /**
+     * Approve, then follow — the panel's third action, in context. Two writes,
+     * and the approve cannot be taken back, so a failed follow still leaves
+     * the request accepted and logged as a plain accept. That is exactly what
+     * happened, and it leaves them in the log still offering a follow back.
+     */
+    const acceptAndFollow = async () => {
+      for (const button of buttons) button.disabled = true;
+      status.hidden = false;
+      status.textContent = 'Accepting…';
+      wrap.hidden = true;
+
+      const approved = await window.__requestBlaster.call('approve', { userId: String(user.pk) });
+      if (!approved?.ok) return fail(approved);
+
+      await markHandled(String(user.pk));
+      status.textContent = 'Following…';
+
+      const followed = await window.__requestBlaster.call('follow', { userId: String(user.pk) });
+      await logAction(user, followed?.ok ? 'acceptFollow' : 'accept');
+
+      if (followed?.ok) {
+        // Accepting does not make a private account public to you, so the
+        // follow lands as a request rather than a follow.
+        status.textContent = followed.data?.result === 'requested'
+          ? 'Accepted · follow requested'
+          : 'Accepted + followed';
+        setMeta('');
       } else {
-        wrap.hidden = false;
-        status.hidden = true;
-        accept.disabled = false;
-        reject.disabled = false;
-        shadow.querySelector('.meta').textContent = result?.blocked
-          ? 'Instagram is rate limiting — wait a while before retrying.'
-          : `Failed: ${result?.error || 'unknown error'}`;
+        status.textContent = 'Accepted';
+        setMeta(followed?.blocked
+          ? 'Accepted, but Instagram is rate limiting the follow.'
+          : `Accepted, but the follow failed: ${followed?.error || 'unknown error'}`);
       }
     };
 
-    accept.onclick = act('approve', 'Accepted', 'Accepting…', 'accept');
-    reject.onclick = act('ignore', 'Rejected', 'Rejecting…', 'reject');
+    shadow.querySelector('.accept').onclick = act('approve', 'Accepted', 'Accepting…', 'accept');
+    shadow.querySelector('.accept-follow').onclick = acceptAndFollow;
+    shadow.querySelector('.reject').onclick = act('ignore', 'Rejected', 'Rejecting…', 'reject');
   }
 
   // ----------------------------------------------------------- orchestration
