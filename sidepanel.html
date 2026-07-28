@@ -8,25 +8,13 @@
 </head>
 <body data-state="loading">
 
+<!-- No title row: Chrome's own side panel header already names the extension
+     directly above this, and the count lives with the list it counts. -->
 <header class="panel-header">
-  <div class="header-top">
-    <h1>Follow requests</h1>
-    <button id="refresh" class="icon-btn" title="Refetch the pending list">Refresh</button>
-  </div>
-
   <nav class="modes">
     <button id="mode-requests" class="mode" data-mode="requests">Requests</button>
     <button id="mode-log" class="mode" data-mode="log" title="Everything you have accepted and rejected">Log</button>
   </nav>
-
-  <div id="hydration" class="hydration">
-    <div class="hydration-line">
-      <span id="hydration-label" title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front.">0 / 0 details loaded</span>
-      <button id="load-batch" class="btn btn-small" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
-      <button id="stop-hydration" class="btn btn-small btn-quiet" hidden>Stop</button>
-    </div>
-    <div class="progress"><div id="hydration-bar" class="progress-fill"></div></div>
-  </div>
 </header>
 
 <div id="banner" class="banner" hidden>
@@ -41,12 +29,10 @@
 </div>
 
 <section class="filters">
-  <input id="search" type="search" class="search" placeholder="Search username or name" autocomplete="off">
-
-  <div class="filter-row">
+  <div class="filter-bar">
     <label class="toggle-chip">
       <input type="checkbox" id="f-following">
-      <span>I already follow them</span>
+      <span>Already follow</span>
     </label>
 
     <label class="select-chip">
@@ -61,58 +47,92 @@
       </select>
     </label>
 
-    <!-- Free from the pending list, so this one works on every row. -->
-    <label class="toggle-chip"><input type="checkbox" id="f-default-pic"><span>No profile pic</span></label>
-  </div>
+    <div class="popover-host">
+      <button id="spam-toggle" type="button" class="chip-button" aria-expanded="false" aria-controls="spam-panel">
+        <span>Spam</span><span id="spam-count" class="chip-count" hidden></span>
+      </button>
 
-  <details class="filter-group">
-    <summary>Spam signals <em>— enriched rows only</em></summary>
-    <div class="filter-row">
-      <label class="select-chip">
-        <span>Followers under</span>
-        <input id="f-max-followers" type="number" min="0" step="1" placeholder="—" class="num">
-      </label>
-      <label class="toggle-chip"><input type="checkbox" id="f-zero-posts"><span>0 posts</span></label>
-      <label class="toggle-chip"><input type="checkbox" id="f-empty-bio"><span>Empty bio</span></label>
-      <label class="toggle-chip"><input type="checkbox" id="f-bot-ratio"><span>Bot ratio</span></label>
+      <div id="spam-panel" class="popover" hidden>
+        <!-- Comes off the pending list itself, so unlike the four below it
+             filters every row whether or not its details have loaded. -->
+        <label class="popover-check">
+          <input type="checkbox" id="f-default-pic"><span>No profile pic</span>
+        </label>
+
+        <div class="popover-divider"></div>
+        <p class="popover-label">Needs loaded details</p>
+
+        <label class="popover-check">
+          <span>Followers under</span>
+          <input id="f-max-followers" type="number" min="0" step="1" placeholder="—" class="num">
+        </label>
+        <label class="popover-check"><input type="checkbox" id="f-zero-posts"><span>0 posts</span></label>
+        <label class="popover-check"><input type="checkbox" id="f-empty-bio"><span>Empty bio</span></label>
+        <label class="popover-check"><input type="checkbox" id="f-bot-ratio"><span>Bot ratio</span></label>
+
+        <p id="enriched-warning" class="warning" hidden></p>
+      </div>
     </div>
-    <p id="enriched-warning" class="warning" hidden></p>
-  </details>
 
-  <div class="filter-row filter-row-end">
-    <label class="select-chip">
-      <span>Sort</span>
-      <select id="sort">
-        <option value="default">Following, then mutuals</option>
-        <option value="newest">Newest request</option>
-        <option value="followers">Most followers</option>
-      </select>
-    </label>
+    <button id="search-toggle" type="button" class="icon-toggle" aria-expanded="false" aria-controls="search" aria-label="Search username or name" title="Search username or name">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+        <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></line>
+      </svg>
+    </button>
   </div>
 
-  <div class="result-line">
-    <label class="toggle-chip">
-      <input type="checkbox" id="select-all">
-      <span>Select all shown</span>
-    </label>
-    <span id="shown-count" class="muted"></span>
-  </div>
+  <input id="search" type="search" class="search" placeholder="Search username or name" autocomplete="off" hidden>
 </section>
 
+<section class="result-bar">
+  <label class="toggle-chip">
+    <input type="checkbox" id="select-all">
+    <span>Select all shown</span>
+  </label>
+  <span id="shown-count" class="muted"></span>
+  <label class="select-chip">
+    <span>Sort</span>
+    <select id="sort">
+      <option value="default">Following, then mutuals</option>
+      <option value="newest">Newest request</option>
+      <option value="followers">Most followers</option>
+    </select>
+  </label>
+</section>
+
+<div id="hydration" class="hydration">
+  <div class="hydration-line">
+    <span id="hydration-label" title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front.">0 / 0 details loaded</span>
+    <button id="load-batch" class="btn btn-small" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
+    <button id="stop-hydration" class="btn btn-small btn-quiet" hidden>Stop</button>
+  </div>
+  <div class="progress"><div id="hydration-bar" class="progress-fill"></div></div>
+</div>
+
 <section class="log-controls">
-  <input id="log-search" type="search" class="search" placeholder="Search username" autocomplete="off">
-  <div class="filter-row">
+  <div class="filter-bar">
     <button class="log-tab" data-kind="all">All</button>
     <button class="log-tab" data-kind="accepted">Accepted</button>
     <button class="log-tab" data-kind="rejected">Rejected</button>
+
+    <button id="log-search-toggle" type="button" class="icon-toggle" aria-expanded="false" aria-controls="log-search" aria-label="Search username" title="Search username">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+        <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></line>
+      </svg>
+    </button>
   </div>
-  <div class="result-line">
-    <label class="toggle-chip">
-      <input type="checkbox" id="log-select-all">
-      <span>Select all shown</span>
-    </label>
-    <span id="log-count" class="muted"></span>
-  </div>
+
+  <input id="log-search" type="search" class="search" placeholder="Search username" autocomplete="off" hidden>
+</section>
+
+<section class="result-bar result-bar-log">
+  <label class="toggle-chip">
+    <input type="checkbox" id="log-select-all">
+    <span>Select all shown</span>
+  </label>
+  <span id="log-count" class="muted"></span>
 </section>
 
 <div id="status" class="status"></div>
@@ -121,6 +141,14 @@
   <div id="list" class="list"></div>
   <div id="log-list" class="list"></div>
   <div id="log-empty" class="empty" hidden></div>
+
+  <!-- A standing fact about the data, so it gets its own element rather than
+       the status line, where every transient message would overwrite it. -->
+  <p id="cap-note" class="cap-note" hidden>
+    Instagram only exposes <span id="cap-count"></span> at a time — clear these, then
+    <button id="refresh" type="button" class="link-inline">Refresh</button> for the next batch.
+  </p>
+
   <div class="log-footer">
     <button id="log-older" class="btn btn-small" hidden>Load older</button>
     <button id="log-clear" class="btn btn-small btn-quiet">Clear log</button>
@@ -142,12 +170,12 @@
       <button id="bulk-clear" class="btn btn-small btn-quiet">Clear</button>
     </div>
     <div class="bulk-actions" data-for="requests">
-      <button id="bulk-accept" class="btn btn-accept">Accept</button>
-      <button id="bulk-accept-follow" class="btn btn-accept-follow">Accept + follow</button>
+      <button id="bulk-accept" class="btn">Accept</button>
+      <button id="bulk-accept-follow" class="btn">Accept + follow</button>
       <button id="bulk-reject" class="btn btn-reject">Reject</button>
     </div>
     <div class="bulk-actions" data-for="log">
-      <button id="bulk-follow-back" class="btn btn-accept-follow">Follow back</button>
+      <button id="bulk-follow-back" class="btn">Follow back</button>
     </div>
   </div>
 </div>

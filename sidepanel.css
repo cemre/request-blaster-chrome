@@ -74,6 +74,7 @@
    fatal error there is nothing to filter, select or act on, so showing those
    controls just invites clicks that do nothing. */
 body:not([data-state='ready']) .filters,
+body:not([data-state='ready']) .result-bar,
 body:not([data-state='ready']) .log-controls,
 body:not([data-state='ready']) .modes,
 body:not([data-state='ready']) .toolbar,
@@ -83,10 +84,13 @@ body:not([data-state='ready']) .hydration { display: none !important; }
 /* Requests and the log share the scroll area and the floating toolbar; each
    mode hides the other's controls rather than duplicating the shell. */
 body[data-mode='log'] .filters,
+body[data-mode='log'] .result-bar:not(.result-bar-log),
 body[data-mode='log'] .hydration,
+body[data-mode='log'] .cap-note,
 body[data-mode='log'] #list,
 body[data-mode='log'] .bulk-actions[data-for='requests'],
 body[data-mode='requests'] .log-controls,
+body[data-mode='requests'] .result-bar-log,
 body[data-mode='requests'] #log-list,
 body[data-mode='requests'] #log-empty,
 body[data-mode='requests'] .log-footer,
@@ -142,20 +146,13 @@ h1 {
 /* ---------------------------------------------------------------- header */
 
 .panel-header {
-  padding: var(--gap);
+  padding: 0 var(--gap);
   border-bottom: 1px solid var(--border);
-}
-
-.header-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .modes {
   display: flex;
   gap: 16px;
-  margin-top: 8px;
 }
 
 .mode {
@@ -183,8 +180,10 @@ h1 {
   border-bottom-color: var(--text);
 }
 
+/* Sits directly above the list it describes, not up in the header. */
 .hydration {
-  margin-top: 8px;
+  padding: 7px var(--gap);
+  border-bottom: 1px solid var(--border);
 }
 
 .hydration-line {
@@ -230,12 +229,31 @@ h1 {
 /* --------------------------------------------------------------- filters */
 
 .filters {
-  padding: var(--gap);
+  padding: 8px var(--gap);
   display: flex;
   flex-direction: column;
   gap: 8px;
   border-bottom: 1px solid var(--border);
 }
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Hard right, whatever the chips before it happen to measure. */
+.filter-bar .icon-toggle { margin-left: auto; }
+
+.result-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px var(--gap);
+  border-bottom: 1px solid var(--border);
+}
+
+.result-bar .muted { margin-left: auto; }
 
 .search {
   width: 100%;
@@ -248,14 +266,6 @@ h1 {
 }
 
 .search::placeholder { color: var(--text-tertiary); }
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.filter-row-end { justify-content: space-between; }
 
 .toggle-chip,
 .select-chip {
@@ -301,29 +311,100 @@ h1 {
 
 .select-chip .num { width: 60px; cursor: text; }
 
-.filter-group summary {
-  font-size: 12px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-}
-
-.filter-group summary em { color: var(--text-tertiary); font-style: normal; }
-
 .warning {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 11px;
   color: var(--text-secondary);
 }
 
-.result-line {
-  display: flex;
+.muted { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------- spam signals popover */
+
+/* Same shape as .toggle-chip, but a real button — it opens a panel rather
+   than carrying a checkbox of its own. */
+.chip-button {
+  font: inherit;
+  font-size: 12px;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
 }
 
-.muted { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chip-button:hover { border-color: var(--border-strong); color: var(--text); }
+
+.chip-button[aria-expanded='true'],
+.chip-button.is-filtering {
+  background: var(--secondary-bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.chip-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.chip-count { font-variant-numeric: tabular-nums; }
+
+.popover-host { position: relative; }
+
+/* Overlays the list rather than pushing it down — the disclosure this
+   replaces moved every row on screen each time it opened. */
+.popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  min-width: 200px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.popover-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.popover-check input[type='checkbox'] { accent-color: var(--primary); }
+
+.popover-check .num {
+  width: 64px;
+  font: inherit;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.popover-divider {
+  height: 1px;
+  margin: 8px -10px;
+  background: var(--border);
+}
+
+.popover-label {
+  margin: 0 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
 
 /* ------------------------------------------------------- bulk + progress */
 
@@ -536,7 +617,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 /* ------------------------------------------------------------ action log */
 
 .log-controls {
-  padding: var(--gap);
+  padding: 8px var(--gap);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -652,6 +733,15 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   padding: 24px var(--gap);
   text-align: center;
   font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cap-note {
+  margin: 0;
+  padding: 12px var(--gap);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--text-secondary);
 }
 

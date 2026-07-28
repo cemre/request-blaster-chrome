@@ -41,6 +41,13 @@ const BULK_BUTTONS = {
 /** Day shards pulled per "Load older" click. */
 const LOG_PAGE_DAYS = 14;
 
+/**
+ * The filters behind the Spam chip. `defaultPic` comes off the pending list
+ * itself so it works on every row; the rest need hydration and match nothing
+ * until details load. They share a chip, not a meaning.
+ */
+const SPAM_FILTER_KEYS = ['defaultPic', 'maxFollowers', 'zeroPosts', 'emptyBio', 'botRatio'];
+
 const state = {
   settings: { ...store.DEFAULT_SETTINGS },
   pendingUsers: [],
@@ -137,7 +144,20 @@ function recompute() {
   }
 
   updateHydrationLabel();
+  updateSpamChip();
   updateBulkBar();
+}
+
+/** Keeps the count on the closed Spam chip honest. */
+function updateSpamChip() {
+  const active = SPAM_FILTER_KEYS.filter((key) => {
+    const value = state.filters[key];
+    return key === 'maxFollowers' ? value !== null : Boolean(value);
+  }).length;
+
+  $('spam-count').textContent = String(active);
+  $('spam-count').hidden = active === 0;
+  $('spam-toggle').classList.toggle('is-filtering', active > 0);
 }
 
 function updateHydrationLabel() {
@@ -154,6 +174,10 @@ function updateHydrationLabel() {
   const button = $('load-batch');
   button.textContent = missingInView === 0 ? 'All loaded' : `Load ${next}`;
   button.disabled = state.loading || missingInView === 0 || Boolean(state.hydrationQueue);
+
+  // Nothing loaded yet is the one state where the panel has a single obvious
+  // next action, so the button is allowed to say so.
+  button.classList.toggle('btn-primary', enriched === 0 && missingInView > 0 && !button.disabled);
 }
 
 function updateBulkBar() {
@@ -350,12 +374,11 @@ async function loadPending({ useSnapshot = true } = {}) {
     rebuildRows();
 
     // Instagram serves at most 200 pending requests and offers no cursor past
-    // them. More only become visible once these are cleared.
-    setStatus(
-      state.capped
-        ? `Instagram only exposes ${api.SERVER_PAGE_CAP} at a time — clear these, then Refresh for the next batch.`
-        : ''
-    );
+    // them. More only become visible once these are cleared. A standing fact
+    // about the data, so it gets its own element below the list rather than
+    // the status line, where the next action result would overwrite it.
+    $('cap-count').textContent = String(api.SERVER_PAGE_CAP);
+    $('cap-note').hidden = !state.capped;
     setState('ready');
     // Before recompute, not just in the finally: updateHydrationLabel reads
     // this flag, and leaving it set here left "Load details" disabled forever.
@@ -633,6 +656,21 @@ function bindLog() {
     }, 150);
   });
 
+  const logSearchToggle = () => setSearchOpen($('log-search').hidden, {
+    field: $('log-search'),
+    button: $('log-search-toggle'),
+    onClear: () => {
+      state.log.search = '';
+      recomputeLog();
+    },
+  });
+
+  $('log-search-toggle').addEventListener('click', logSearchToggle);
+
+  $('log-search').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') logSearchToggle();
+  });
+
   $('log-older').addEventListener('click', () => loadLogPage());
 
   const list = $('log-list');
@@ -704,6 +742,28 @@ function toggleLogSelection(userId, checked) {
   updateBulkBar();
 }
 
+/**
+ * Show or hide a search field behind its toggle.
+ *
+ * Closing always clears the query. A hidden field that is still filtering
+ * leaves the list silently short with nothing on screen to explain it, so the
+ * toggle must never be able to conceal an active filter.
+ */
+function setSearchOpen(open, { field, button, onClear }) {
+  field.hidden = !open;
+  button.setAttribute('aria-expanded', String(open));
+  button.classList.toggle('is-active', open);
+
+  if (open) {
+    field.focus();
+    return;
+  }
+  if (field.value !== '') {
+    field.value = '';
+    onClear();
+  }
+}
+
 function bind() {
   renderer = new ListRenderer({
     container: $('list'),
@@ -731,6 +791,38 @@ function bind() {
   $('search').addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(readFilters, 150);
+  });
+
+  const searchToggle = () => setSearchOpen($('search').hidden, {
+    field: $('search'),
+    button: $('search-toggle'),
+    onClear: readFilters,
+  });
+
+  $('search-toggle').addEventListener('click', searchToggle);
+
+  $('search').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') searchToggle();
+  });
+
+  const setSpamOpen = (open) => {
+    $('spam-panel').hidden = !open;
+    $('spam-toggle').setAttribute('aria-expanded', String(open));
+  };
+
+  $('spam-toggle').addEventListener('click', (event) => {
+    event.stopPropagation();
+    setSpamOpen($('spam-panel').hidden);
+  });
+
+  // Clicks inside the panel belong to its own controls; anywhere else dismisses.
+  $('spam-panel').addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', () => setSpamOpen(false));
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || $('spam-panel').hidden) return;
+    setSpamOpen(false);
+    $('spam-toggle').focus();
   });
 
   $('sort').addEventListener('change', async () => {
