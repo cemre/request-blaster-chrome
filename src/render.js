@@ -4,6 +4,7 @@
 // extend it as the user scrolls. All user-controlled text goes in via
 // textContent, never innerHTML — usernames and bios are attacker-controlled.
 
+import { ACTION_LABELS, groupByDay } from './history.js';
 import { formatCount } from './model.js';
 
 const PAGE_SIZE = 60;
@@ -12,6 +13,15 @@ function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+/** A real button, so the profile is reachable by keyboard as well as click. */
+function openTarget(tag, className, text, title) {
+  const node = el(tag, className, text);
+  node.dataset.action = 'open';
+  node.title = title;
+  if (tag === 'button') node.type = 'button';
   return node;
 }
 
@@ -42,15 +52,25 @@ export class ListRenderer {
     if (!row) return;
     const { id } = row.dataset;
 
-    if (event.target.closest('[data-action="accept"]')) return this.handlers.onAccept(id);
-    if (event.target.closest('[data-action="reject"]')) return this.handlers.onReject(id);
     if (event.target.closest('[data-action="open"]')) return this.handlers.onOpenProfile(id);
+
+    // The checkbox fires its own change event and the click bubbles here too;
+    // toggling again below would cancel it out.
+    if (event.target.closest('.row-check')) return;
+
+    // Acting is bulk-only, so the rest of the row is a selection target.
+    const checkbox = row.querySelector('.row-check');
+    if (!checkbox) return;
+    checkbox.checked = !checkbox.checked;
+    row.classList.toggle('is-selected', checkbox.checked);
+    this.handlers.onToggleSelect(id, checkbox.checked);
   }
 
   onChange(event) {
     const checkbox = event.target.closest('.row-check');
     if (!checkbox) return;
     const row = checkbox.closest('.row');
+    row.classList.toggle('is-selected', checkbox.checked);
     this.handlers.onToggleSelect(row.dataset.id, checkbox.checked);
   }
 
@@ -99,12 +119,14 @@ export class ListRenderer {
     const node = this.nodesById.get(id);
     if (!node) return;
     node.classList.remove('is-accepted', 'is-rejected', 'is-failed', 'is-busy');
-    node.classList.add(`is-${state}`);
+    node.classList.add(`is-${state}`, 'has-state');
 
     let chip = node.querySelector('.row-state');
     if (!chip) {
+      // Rows carry no buttons, so the status column only exists once there is
+      // something to say — `has-state` opens the grid track for it.
       chip = el('div', 'row-state');
-      node.querySelector('.row-actions').appendChild(chip);
+      node.appendChild(chip);
     }
     chip.textContent = message;
   }
@@ -127,9 +149,9 @@ export class ListRenderer {
     checkbox.setAttribute('aria-label', `Select ${row.username}`);
     node.appendChild(checkbox);
 
-    const avatarButton = el('button', 'avatar-button');
-    avatarButton.dataset.action = 'open';
-    avatarButton.title = `Open @${row.username} in the main tab`;
+    const openLabel = `Open @${row.username} in the main tab`;
+
+    const avatarButton = openTarget('button', 'avatar-button', undefined, openLabel);
     const avatar = document.createElement('img');
     avatar.className = 'avatar';
     avatar.src = row.avatar;
@@ -142,17 +164,23 @@ export class ListRenderer {
     const main = el('div', 'row-main');
 
     const title = el('div', 'row-title');
-    title.appendChild(el('span', 'username', `@${row.username}`));
+    title.appendChild(openTarget('button', 'username link-button', `@${row.username}`, openLabel));
     if (row.isVerified) title.appendChild(el('span', 'chip chip-verified', 'Verified'));
     if (row.following) title.appendChild(el('span', 'chip chip-following', 'Following'));
     if (row.isPrivate) title.appendChild(el('span', 'chip', 'Private'));
     main.appendChild(title);
 
-    if (row.fullName) main.appendChild(el('div', 'row-name', row.fullName));
+    if (row.fullName) {
+      main.appendChild(openTarget('button', 'row-name link-button', row.fullName, openLabel));
+    }
 
     const stats = [];
-    const mutualLabel = row.enriched ? 'mutuals' : 'mutuals (est.)';
-    stats.push(`${row.mutuals} ${mutualLabel}`);
+    const noun = row.mutuals === 1 ? 'mutual' : 'mutuals';
+    // Before hydration the count comes from Instagram's "Followed by …" string,
+    // so it is an estimate. The tilde says so without needing a legend; a count
+    // of zero is exact either way.
+    const prefix = row.enriched || row.mutuals === 0 ? '' : '~';
+    stats.push(`${prefix}${row.mutuals} ${noun}`);
     if (row.enriched) {
       stats.push(`${formatCount(row.followers)} followers`);
       stats.push(`${formatCount(row.posts)} posts`);
@@ -167,18 +195,65 @@ export class ListRenderer {
       main.appendChild(el('div', 'row-bio', row.bio.replace(/\s+/g, ' ').trim()));
     }
 
-    if (!row.enriched) main.appendChild(el('div', 'row-pending-detail', 'Details not loaded'));
-
     node.appendChild(main);
-
-    const actions = el('div', 'row-actions');
-    const accept = el('button', 'btn btn-accept', 'Accept');
-    accept.dataset.action = 'accept';
-    const reject = el('button', 'btn btn-reject', 'Reject');
-    reject.dataset.action = 'reject';
-    actions.append(accept, reject);
-    node.appendChild(actions);
 
     return node;
   }
+}
+
+// --------------------------------------------------------------- action log
+
+const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * Render the log into `container`, grouped under day headings.
+ *
+ * Unwindowed on purpose: the view loads a bounded number of day shards at a
+ * time, so the row count is already bounded by what was asked for rather than
+ * by how long the extension has been in use.
+ *
+ * `canFollow(record)` decides which rows get a checkbox — the accepted ones you
+ * do not already follow, since following back is the only thing you can do
+ * from here.
+ */
+export function renderLog(container, records, { now, selected, canFollow }) {
+  container.textContent = '';
+  const fragment = document.createDocumentFragment();
+
+  for (const day of groupByDay(records, now)) {
+    fragment.appendChild(el('div', 'log-day', day.label));
+
+    for (const record of day.records) {
+      const row = el('div', 'log-row');
+      row.dataset.id = record.userId;
+      row.dataset.at = String(record.at);
+
+      if (canFollow(record)) {
+        row.classList.add('is-selectable');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'row-check log-check';
+        checkbox.checked = selected.has(record.userId);
+        checkbox.setAttribute('aria-label', `Select ${record.username}`);
+        row.appendChild(checkbox);
+        if (selected.has(record.userId)) row.classList.add('is-selected');
+      } else {
+        row.appendChild(el('span', 'log-check-spacer'));
+      }
+
+      row.appendChild(el('time', 'log-time', timeFormat.format(new Date(record.at))));
+
+      const username = openTarget('button', 'log-user link-button', `@${record.username}`,
+        `Open @${record.username} in the main tab`);
+      row.appendChild(username);
+
+      const action = el('span', `log-action log-action-${record.action}`,
+        ACTION_LABELS[record.action] || record.action);
+      row.appendChild(action);
+
+      fragment.appendChild(row);
+    }
+  }
+
+  container.appendChild(fragment);
 }

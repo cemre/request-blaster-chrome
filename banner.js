@@ -21,6 +21,12 @@
   const SNAPSHOT_KEY = 'pendingSnapshot';
   const HANDLED_KEY = 'handledIds';
 
+  // Action log, shared with src/history.js — keep in sync. Duplicated rather
+  // than imported because this is a classic content script and cannot load the
+  // panel's ES modules.
+  const DAY_PREFIX = 'log:';
+  const LOG_INDEX_KEY = 'logIndex';
+
   const HOST_ID = 'request-blaster-banner';
   const TICK_MS = 600;
 
@@ -93,6 +99,27 @@
     // The panel watches this key and drops the row, so acting here keeps the
     // two views consistent without any direct messaging between them.
     await writeSession(HANDLED_KEY, [...handled]);
+  }
+
+  /**
+   * Append to the same day-sharded action log the panel writes, so acting from
+   * a profile page shows up in the log alongside everything else.
+   */
+  async function logAction(user, action) {
+    try {
+      const at = Date.now();
+      const shard = DAY_PREFIX + new Date(at).toISOString().slice(0, 10);
+      const stored = await chrome.storage.local.get([shard, LOG_INDEX_KEY]);
+      const index = stored[LOG_INDEX_KEY] || [];
+
+      await chrome.storage.local.set({
+        [shard]: [...(stored[shard] || []), { at, userId: String(user.pk), username: user.username, action }],
+        [LOG_INDEX_KEY]: index.includes(shard) ? index : [...index, shard].sort(),
+      });
+    } catch {
+      // Extension context invalidated by a reload, or storage unavailable.
+      // Never worth failing the action the user actually asked for.
+    }
   }
 
   /**
@@ -231,7 +258,7 @@
     if (user.social_context) bits.push(user.social_context);
     shadow.querySelector('.meta').textContent = bits.join(' · ');
 
-    const act = (op, doneLabel, busyLabel) => async () => {
+    const act = (op, doneLabel, busyLabel, logged) => async () => {
       accept.disabled = true;
       reject.disabled = true;
       status.hidden = false;
@@ -242,6 +269,7 @@
 
       if (result?.ok) {
         await markHandled(String(user.pk));
+        await logAction(user, logged);
         status.textContent = doneLabel;
         shadow.querySelector('.meta').textContent = '';
       } else {
@@ -255,8 +283,8 @@
       }
     };
 
-    accept.onclick = act('approve', 'Accepted', 'Accepting…');
-    reject.onclick = act('ignore', 'Rejected', 'Rejecting…');
+    accept.onclick = act('approve', 'Accepted', 'Accepting…', 'accept');
+    reject.onclick = act('ignore', 'Rejected', 'Rejecting…', 'reject');
   }
 
   // ----------------------------------------------------------- orchestration

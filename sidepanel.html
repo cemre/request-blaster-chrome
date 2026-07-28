@@ -15,10 +15,15 @@
     <button id="refresh" class="icon-btn" title="Refetch the pending list">Refresh</button>
   </div>
 
+  <nav class="modes">
+    <button id="mode-requests" class="mode" data-mode="requests">Requests</button>
+    <button id="mode-log" class="mode" data-mode="log" title="Everything you have accepted and rejected">Log</button>
+  </nav>
+
   <div id="hydration" class="hydration">
     <div class="hydration-line">
-      <span id="hydration-label">0 / 0 enriched</span>
-      <button id="load-batch" class="btn btn-small">Load next 100</button>
+      <span id="hydration-label" title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front.">0 / 0 details loaded</span>
+      <button id="load-batch" class="btn btn-small" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
       <button id="stop-hydration" class="btn btn-small btn-quiet" hidden>Stop</button>
     </div>
     <div class="progress"><div id="hydration-bar" class="progress-fill"></div></div>
@@ -101,24 +106,58 @@
   </div>
 </section>
 
-<div id="bulk-bar" class="bulk-bar" hidden>
-  <span id="bulk-count" class="bulk-count"></span>
-  <button id="bulk-accept" class="btn btn-accept">Accept</button>
-  <button id="bulk-reject" class="btn btn-reject">Reject</button>
-  <button id="bulk-clear" class="btn btn-quiet">Clear</button>
-</div>
-
-<div id="action-progress" class="action-progress" hidden>
-  <span id="action-label"></span>
-  <button id="action-stop" class="btn btn-small btn-quiet">Stop</button>
-</div>
+<section class="log-controls">
+  <input id="log-search" type="search" class="search" placeholder="Search username" autocomplete="off">
+  <div class="filter-row">
+    <button class="log-tab" data-kind="all">All</button>
+    <button class="log-tab" data-kind="accepted">Accepted</button>
+    <button class="log-tab" data-kind="rejected">Rejected</button>
+  </div>
+  <div class="result-line">
+    <label class="toggle-chip">
+      <input type="checkbox" id="log-select-all">
+      <span>Select all shown</span>
+    </label>
+    <span id="log-count" class="muted"></span>
+  </div>
+</section>
 
 <div id="status" class="status"></div>
 
 <main class="list-scroll">
   <div id="list" class="list"></div>
+  <div id="log-list" class="list"></div>
+  <div id="log-empty" class="empty" hidden></div>
+  <div class="log-footer">
+    <button id="log-older" class="btn btn-small" hidden>Load older</button>
+    <button id="log-clear" class="btn btn-small btn-quiet">Clear log</button>
+  </div>
   <div id="sentinel" class="sentinel"></div>
 </main>
+
+<!-- Acting is bulk-only, so the controls live in one floating bar over the
+     list rather than repeating on every row. -->
+<div id="toolbar" class="toolbar" hidden>
+  <div id="action-progress" class="action-progress" hidden>
+    <span id="action-label"></span>
+    <button id="action-stop" class="btn btn-small btn-quiet">Stop</button>
+  </div>
+
+  <div id="bulk-bar" class="bulk-bar" hidden>
+    <div class="bulk-top">
+      <span id="bulk-count" class="bulk-count"></span>
+      <button id="bulk-clear" class="btn btn-small btn-quiet">Clear</button>
+    </div>
+    <div class="bulk-actions" data-for="requests">
+      <button id="bulk-accept" class="btn btn-accept">Accept</button>
+      <button id="bulk-accept-follow" class="btn btn-accept-follow">Accept + follow</button>
+      <button id="bulk-reject" class="btn btn-reject">Reject</button>
+    </div>
+    <div class="bulk-actions" data-for="log">
+      <button id="bulk-follow-back" class="btn btn-accept-follow">Follow back</button>
+    </div>
+  </div>
+</div>
 
 <dialog id="confirm" class="confirm">
   <form method="dialog">

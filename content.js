@@ -141,6 +141,13 @@ const OPERATIONS = {
   ignore({ userId }) {
     return igFetch(`${API_ROOT}/web/friendships/${userId}/ignore/`, { method: 'POST' });
   },
+
+  // Follow back. Answers { status: 'ok', result: 'following' | 'requested' } —
+  // 'requested' when the account is private, which is still the case right
+  // after you accept their request.
+  follow({ userId }) {
+    return igFetch(`${API_ROOT}/web/friendships/${userId}/follow/`, { method: 'POST' });
+  },
 };
 
 // banner.js runs in the same isolated world and needs to make the same

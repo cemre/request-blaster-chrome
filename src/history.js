@@ -1,0 +1,146 @@
+// history.js — pure transforms for the local action log. No chrome.*, no DOM.
+//
+// The log is append-only and holds one line per action actually taken:
+// when, who, what. Nothing is derived into a second copy and nothing is
+// mutated after the fact, so the file on disk is always just the list of
+// things that happened.
+//
+// Records are sharded by day. That keeps appends small, makes retention a
+// matter of deleting whole keys, and means the panel reads none of this at
+// startup — the log is loaded only when you open it.
+
+export const DAY_PREFIX = 'log:';
+
+// Not `log:`-prefixed on purpose: day shards are found by that prefix, and an
+// index living inside its own namespace would be picked up as a shard.
+export const LOG_INDEX_KEY = 'logIndex';
+
+export const RETENTION_DAYS = 730;
+
+export const ACCEPT = 'accept';
+export const ACCEPT_FOLLOW = 'acceptFollow';
+export const REJECT = 'reject';
+// Following someone back later, from the log itself.
+export const FOLLOW = 'follow';
+
+export const ACTION_LABELS = {
+  [ACCEPT]: 'Accepted',
+  [ACCEPT_FOLLOW]: 'Accepted + followed',
+  [REJECT]: 'Rejected',
+  [FOLLOW]: 'Followed back',
+};
+
+/** Actions that put someone on your accepted list. */
+const ACCEPTING = new Set([ACCEPT, ACCEPT_FOLLOW]);
+/** Actions that mean you now follow them. */
+const FOLLOWING = new Set([ACCEPT_FOLLOW, FOLLOW]);
+
+const DAY_MS = 86400000;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// -------------------------------------------------------------------- keys
+
+/**
+ * UTC, so a shard key never depends on where the browser happens to be.
+ * Clock times are rendered in local time; only the boundary is UTC.
+ */
+export function dayKey(at) {
+  return DAY_PREFIX + new Date(at).toISOString().slice(0, 10);
+}
+
+export function dayKeyDate(key) {
+  return key.slice(DAY_PREFIX.length);
+}
+
+/** Shards past the retention window, for deletion. `index` is the stored list. */
+export function expiredDayKeys(index, now, retentionDays = RETENTION_DAYS) {
+  const cutoff = new Date(now - retentionDays * DAY_MS).toISOString().slice(0, 10);
+  return (index || []).filter((key) => dayKeyDate(key) < cutoff);
+}
+
+// ----------------------------------------------------------------- records
+
+/**
+ * One line of the log. Only successful actions are recorded — a rejection that
+ * failed did not happen, and logging it would make the log answer "what did I
+ * try" when the question being asked is "what did I do".
+ */
+export function buildRecord({ at, userId, username, action }) {
+  return { at, userId: String(userId), username, action };
+}
+
+// ------------------------------------------------------------------- views
+
+export function isAccept(record) {
+  return ACCEPTING.has(record.action);
+}
+
+export function isReject(record) {
+  return record.action === REJECT;
+}
+
+/**
+ * Ids you already follow, so the accepted list can offer "Follow back" only
+ * where it would actually do something. Derived on read rather than tracked as
+ * state — the log already says it.
+ */
+export function followedIds(records) {
+  const ids = new Set();
+  for (const record of records) {
+    if (FOLLOWING.has(record.action)) ids.add(record.userId);
+  }
+  return ids;
+}
+
+export const FILTERS = {
+  all: () => true,
+  accepted: isAccept,
+  rejected: isReject,
+};
+
+export function filterRecords(records, { kind = 'all', search = '' } = {}) {
+  const predicate = FILTERS[kind] || FILTERS.all;
+  const term = search.trim().toLowerCase();
+
+  return records.filter((record) => {
+    if (!predicate(record)) return false;
+    if (term && !record.username.toLowerCase().includes(term)) return false;
+    return true;
+  });
+}
+
+/** Newest first — the order you want when you are looking for a mistake. */
+export function sortRecords(records) {
+  return [...records].sort((a, b) => b.at - a.at);
+}
+
+/**
+ * Locale-independent on purpose: a fixed format keeps the day headers stable
+ * and the tests deterministic. Times are formatted at the render layer.
+ */
+export function dayLabel(isoDate, now) {
+  const today = new Date(now).toISOString().slice(0, 10);
+  const yesterday = new Date(now - DAY_MS).toISOString().slice(0, 10);
+  if (isoDate === today) return 'Today';
+  if (isoDate === yesterday) return 'Yesterday';
+
+  const [year, month, day] = isoDate.split('-');
+  return `${Number(day)} ${MONTHS[Number(month) - 1]} ${year}`;
+}
+
+/** Records bucketed under day headings, newest day first. */
+export function groupByDay(records, now) {
+  const days = new Map();
+
+  for (const record of sortRecords(records)) {
+    const date = dayKeyDate(dayKey(record.at));
+    let group = days.get(date);
+    if (!group) {
+      group = { date, label: dayLabel(date, now), records: [] };
+      days.set(date, group);
+    }
+    group.records.push(record);
+  }
+
+  return [...days.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
+}

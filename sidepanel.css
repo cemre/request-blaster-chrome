@@ -18,10 +18,23 @@
    fatal error there is nothing to filter, select or act on, so showing those
    controls just invites clicks that do nothing. */
 body:not([data-state='ready']) .filters,
-body:not([data-state='ready']) .bulk-bar,
-body:not([data-state='ready']) .action-progress,
+body:not([data-state='ready']) .log-controls,
+body:not([data-state='ready']) .modes,
+body:not([data-state='ready']) .toolbar,
 body:not([data-state='ready']) .list-scroll,
 body:not([data-state='ready']) .hydration { display: none !important; }
+
+/* Requests and the log share the scroll area and the floating toolbar; each
+   mode hides the other's controls rather than duplicating the shell. */
+body[data-mode='log'] .filters,
+body[data-mode='log'] .hydration,
+body[data-mode='log'] #list,
+body[data-mode='log'] .bulk-actions[data-for='requests'],
+body[data-mode='requests'] .log-controls,
+body[data-mode='requests'] #log-list,
+body[data-mode='requests'] #log-empty,
+body[data-mode='requests'] .log-footer,
+body[data-mode='requests'] .bulk-actions[data-for='log'] { display: none !important; }
 
 body:not([data-state='loading']) .loading { display: none !important; }
 
@@ -86,6 +99,32 @@ h1 {
   font-variant-numeric: tabular-nums;
   font-weight: 650;
   opacity: 0.65;
+}
+
+.modes {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.mode {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.mode:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+
+.mode.is-active {
+  opacity: 1;
+  font-weight: 620;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .hydration {
@@ -214,14 +253,49 @@ h1 {
 
 /* ------------------------------------------------------- bulk + progress */
 
-.bulk-bar,
+/* Floats over the list rather than sitting in the flow: the actions are the
+   one thing that should stay reachable no matter how far down you scroll. */
+.toolbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  background: Canvas;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.22);
+}
+
+/* Reserve room so the last row can always be scrolled clear of the bar. */
+body.has-toolbar .list-scroll { padding-bottom: 92px; }
+
+.bulk-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bulk-top,
 .action-progress {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px var(--gap);
-  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+
+.bulk-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Grow to fill, but size to content first so the longest label never wraps. */
+.bulk-actions .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 8px;
+  justify-content: center;
 }
 
 .bulk-count,
@@ -253,12 +327,17 @@ h1 {
 
 .row {
   display: grid;
-  grid-template-columns: auto auto 1fr auto;
+  grid-template-columns: auto auto 1fr;
   align-items: start;
   gap: 8px;
   padding: 9px var(--gap);
   border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+  cursor: pointer;
 }
+
+/* Opened only once markRow appends a status chip — an always-present empty
+   track would eat 8px of gap on every row for nothing. */
+.row.has-state { grid-template-columns: auto auto 1fr auto; }
 
 .row.is-selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .row.is-busy { opacity: 0.55; }
@@ -266,7 +345,14 @@ h1 {
 .row.is-rejected { opacity: 0.4; }
 .row.is-failed { background: color-mix(in srgb, #d32f2f 10%, transparent); }
 
-.row-check { margin-top: 3px; accent-color: var(--accent); }
+.row-check {
+  width: 26px;
+  height: 26px;
+  margin: 4px 0 0;
+  accent-color: var(--accent);
+  flex: none;
+  cursor: pointer;
+}
 
 .avatar-button {
   padding: 0;
@@ -293,7 +379,27 @@ h1 {
   gap: 4px;
 }
 
+/* Username and full name are real buttons so the profile is keyboard
+   reachable; strip the chrome so they still read as text. */
+.link-button {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  max-width: 100%;
+}
+
+.link-button:hover { text-decoration: underline; }
+
 .username { font-weight: 620; }
+
+.row-name {
+  display: block;
+  width: 100%;
+}
 
 .chip {
   font-size: 10px;
@@ -311,8 +417,7 @@ h1 {
 .row-name,
 .row-stats,
 .row-mutuals,
-.row-bio,
-.row-pending-detail {
+.row-bio {
   font-size: 11.5px;
   opacity: 0.7;
   overflow: hidden;
@@ -321,21 +426,115 @@ h1 {
 }
 
 .row-stats { font-variant-numeric: tabular-nums; }
-.row-mutuals,
-.row-pending-detail { opacity: 0.5; }
+.row-mutuals { opacity: 0.5; }
 .row-bio { opacity: 0.6; font-style: italic; }
 
-.row-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: stretch;
+.row-state {
+  align-self: center;
+  max-width: 96px;
+  font-size: 10px;
+  text-align: right;
+  opacity: 0.7;
 }
 
-.row-state {
+/* ------------------------------------------------------------ action log */
+
+.log-controls {
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.log-tab {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.log-tab.is-active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  font-weight: 600;
+}
+
+/* Sticks so you always know which day you have scrolled into. */
+.log-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px var(--gap) 4px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  background: Canvas;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px var(--gap);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.log-row.is-selectable { cursor: pointer; }
+.log-row.is-selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Rows with nothing to follow back keep the columns aligned. */
+.log-check-spacer { width: 26px; }
+
+.log-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.5;
+}
+
+.log-user {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-action {
   font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  opacity: 0.8;
+}
+
+.log-action-accept,
+.log-action-acceptFollow,
+.log-action-follow {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  opacity: 1;
+}
+
+.log-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px var(--gap) 20px;
+}
+
+.empty {
+  padding: 24px var(--gap);
   text-align: center;
-  opacity: 0.7;
+  font-size: 12px;
+  opacity: 0.55;
 }
 
 /* --------------------------------------------------------------- buttons */
@@ -364,6 +563,14 @@ h1 {
 .btn-accept {
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+/* Same family as Accept — it is an accept, with a follow tacked on — but
+   filled, since it is the more consequential of the two. */
+.btn-accept-follow {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  font-weight: 600;
 }
 
 .btn-reject { opacity: 0.85; }

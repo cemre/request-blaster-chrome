@@ -1,4 +1,7 @@
-// store.js — chrome.storage access and the hydrated-profile cache.
+// store.js — chrome.storage access, the hydrated-profile cache, and the
+// durable action history.
+
+import { DAY_PREFIX, LOG_INDEX_KEY, dayKey, expiredDayKeys } from './history.js';
 
 const CACHE_KEY = 'profileCache';
 const SETTINGS_KEY = 'settings';
@@ -106,4 +109,83 @@ export async function addHandledId(id) {
   } catch {
     /* ignore */
   }
+}
+
+// ------------------------------------------------------------ action log
+//
+// Append-only, sharded by day. Nothing here is read at startup — the panel
+// touches the log only when you open it. See src/history.js for the layout.
+
+/**
+ * Append one action. Touches two small keys: today's shard and the shard
+ * index. Written per action rather than batched, because the corresponding
+ * write on Instagram's side is irreversible and there must be no window where
+ * closing the panel loses the record of it.
+ */
+export async function appendAction(record) {
+  try {
+    const shard = dayKey(record.at);
+    const stored = await chrome.storage.local.get([shard, LOG_INDEX_KEY]);
+    const index = stored[LOG_INDEX_KEY] || [];
+
+    await chrome.storage.local.set({
+      [shard]: [...(stored[shard] || []), record],
+      [LOG_INDEX_KEY]: index.includes(shard) ? index : [...index, shard].sort(),
+    });
+    return true;
+  } catch {
+    // The log is a record of triage, not part of it. Never fail an action.
+    return false;
+  }
+}
+
+/** Day shard keys that exist, newest first. */
+export async function loadLogIndex() {
+  try {
+    const stored = await chrome.storage.local.get(LOG_INDEX_KEY);
+    return [...(stored[LOG_INDEX_KEY] || [])].sort().reverse();
+  } catch {
+    return [];
+  }
+}
+
+/** Records from specific day shards. The log view pages through these. */
+export async function loadLogDays(shardKeys) {
+  if (!shardKeys || shardKeys.length === 0) return [];
+  try {
+    const stored = await chrome.storage.local.get(shardKeys);
+    return shardKeys.flatMap((key) => stored[key] || []);
+  } catch {
+    return [];
+  }
+}
+
+/** Drop shards past the retention window. */
+export async function pruneLog(now = Date.now()) {
+  try {
+    const index = (await chrome.storage.local.get(LOG_INDEX_KEY))[LOG_INDEX_KEY] || [];
+    const expired = expiredDayKeys(index, now);
+    if (expired.length === 0) return 0;
+
+    await chrome.storage.local.remove(expired);
+    await chrome.storage.local.set({
+      [LOG_INDEX_KEY]: index.filter((key) => !expired.includes(key)),
+    });
+    return expired.length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Erase the log. The one operation that enumerates storage, because it has to
+ * find every shard rather than the ones the index claims exist.
+ */
+export async function clearLog() {
+  const everything = await chrome.storage.local.get(null);
+  const keys = Object.keys(everything).filter(
+    (key) => key.startsWith(DAY_PREFIX) || key === LOG_INDEX_KEY
+  );
+  if (keys.length > 0) await chrome.storage.local.remove(keys);
+  return keys.length;
 }

@@ -6,6 +6,76 @@ Instagram's own pending list dies the moment you click a requester's profile.
 This keeps the list in a side panel, enriches every row with relationship and
 spam signals, and lets you filter and act in bulk.
 
+## Acting
+
+Triage is bulk-only: rows carry a checkbox and nothing else, and the three
+actions live in a floating toolbar over the list.
+
+| Action | Writes |
+| --- | --- |
+| **Accept** | `approve` |
+| **Accept + follow** | `approve`, then `follow` — skipped when you already follow them |
+| **Reject** | `ignore` |
+
+Clicking anywhere in a row toggles its checkbox; the avatar, username and full
+name open that profile in the main tab instead.
+
+Accept + follow is two writes per person against a rate limit that punishes
+writes, so it runs at roughly half the throughput of a plain accept — the
+follow is spaced by half the between-person gap. If Instagram blocks on the
+follow, the row still counts as accepted, because the approve already landed
+and cannot be taken back.
+
+Following a private account you have only just accepted lands as a *request*,
+not a follow. The row says so.
+
+## The log
+
+Instagram keeps no record of what you did with a follow request — a rejection
+just disappears. The **Log** tab is a local, append-only record of every accept
+and reject, from the panel and the on-page banner alike, so you can go back and
+find someone you rejected by mistake.
+
+One line per action: timestamp, username, what you did. Grouped by day, newest
+first, with All / Accepted / Rejected filters and a username search.
+
+Under **Accepted**, anyone you have not followed back gets a checkbox, and the
+toolbar offers **Follow back** — paced like any other write. Whether you already
+follow someone is derived from the log rather than tracked as its own state:
+an `acceptFollow` or a later `follow` line settles it. Nothing has to be kept in
+sync, because there is only ever the one list of things that happened.
+
+Only actions that actually succeeded are recorded. A rejection that failed did
+not happen, and logging it would make the log answer "what did I try" when the
+question is "what did I do".
+
+### Storage layout
+
+The log lives in `chrome.storage.local`, sharded by UTC day:
+
+- `log:YYYY-MM-DD` — that day's records
+- `logIndex` — which day shards exist
+
+**Opening the panel reads none of it.** Triage never touches the log; the shards
+load only when you open the Log tab, `LOG_PAGE_DAYS` at a time. Retention is 730
+days and runs on first open, which is just deleting whole keys.
+
+This is the one thing the extension stores about other people indefinitely:
+usernames of accounts that requested to follow you. It is local, never synced,
+and **Clear log** erases it.
+
+## Details
+
+Follower and post counts, bios and exact mutual counts each cost one request
+per person, so they are not fetched up front. **Load N** in the header enriches
+the next batch of rows currently in view, at ~1 request per 2s with live
+progress and a Stop button. Everything else — username, name, avatar, private,
+verified, whether you already follow them, whether they have a default profile
+picture, and an approximate mutual count — comes free with the pending list.
+
+Mutual counts parsed from Instagram's "Followed by …" string are marked with a
+tilde (`~32 mutuals`); once loaded, the exact count replaces it.
+
 Standalone — this is **not** a port of the `Safari Extension/` build. No focus
 mode, no on-page banner, no timer.
 
@@ -33,7 +103,8 @@ else; sequencing stays in the side panel.
 It works with the panel closed: `banner.js` reads the same cached pending list
 and fetches one itself if there isn't one. Acting in either view updates the
 other, via a `handledIds` list in session storage that both watch — no direct
-messaging between them.
+messaging between them. It writes to the same action log, so accepting from a
+profile page shows up in the Log tab alongside everything else.
 
 Styling comes from Instagram's own CSS custom properties (`--ig-primary-button`
 and friends, published on `:root` as `R, G, B` triples). Custom properties
@@ -58,6 +129,9 @@ falls back to a floating bar rather than disappearing.
   alive. `background.js` is a single `setPanelBehavior` call.
 - **`src/model.js`** — pure transforms (merge, filter, sort, parse). No
   `chrome.*`, no DOM, fully unit-tested.
+- **`src/history.js`** — the action log's shape and every transform over it,
+  same rules as `model.js`. `src/store.js` holds the thin `chrome.storage`
+  shell around it.
 
 ## Rate limiting
 
@@ -69,9 +143,11 @@ progress, have a Stop button, and **halt entirely** on the first `429` or
 - Profile enrichment: ~1 request per 2s, 100 at a time on demand.
 - Accept/reject: pace selector in the panel (conservative / moderate / fast),
   defaulting to moderate at ~1 action per 1.5–3s.
+- Accept + follow: the same per-person pace, plus a half-gap between the
+  approve and the follow.
 
-Bulk rejection asks for confirmation naming the exact count and active filter.
-Rejections are not undoable.
+Every bulk action asks for confirmation naming the exact count; rejection is
+additionally flagged as not undoable.
 
 ## The 200 cap
 
@@ -86,9 +162,9 @@ pull the next batch. The panel says so when it detects a full page.
 npm test
 ```
 
-Covers `src/model.js` only — the rest is browser-integration surface. Zero
-dependencies; `package.json` exists purely so Node loads the module as ESM and
-is not used by the extension at runtime.
+Covers `src/model.js` and `src/history.js` — the rest is browser-integration
+surface. Zero dependencies; `package.json` exists purely so Node loads the
+modules as ESM and is not used by the extension at runtime.
 
 ## Instagram API notes
 
@@ -101,5 +177,8 @@ Everything goes through `www.instagram.com/api/v1`. Verified 2026-07-28:
 - `has_anonymous_profile_picture` ships free on the pending list, so the
   "no profile pic" filter needs no enrichment.
 - `pk` arrives as a string.
+- `web/friendships/{id}/follow/` answers `{ result: "following" | "requested" }`.
+  Accepting a request does not make that account public to you, so following a
+  private requester back comes back as `requested`.
 
 Full design and findings: [`docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md`](../docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md)
