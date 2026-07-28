@@ -1,8 +1,10 @@
 /* Values are Instagram's own, so the panel and the banner content.js injects
    speak the same language. This is a deliberate departure from the
    currentColor + opacity convention the other surfaces use: one hue at eleven
-   opacities cannot express hierarchy, and opacity-dimmed text kept landing
-   under 4.5:1. See docs/superpowers/specs/2026-07-28-sidepanel-visual-overhaul-design.md.
+   opacities cannot express hierarchy. These are Instagram's own greys, picked
+   to match the product rather than to clear a contrast ratio — --text-tertiary
+   sits around 2.4:1 on white, so don't read this table as WCAG-compliant.
+   See docs/superpowers/specs/2026-07-28-sidepanel-visual-overhaul-design.md.
 
    color-scheme stays so native controls — scrollbars, select menus, the search
    field's clear button, the dialog backdrop — still follow the OS. */
@@ -409,6 +411,8 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 
 .row:hover { background: var(--bg-hover); }
 
+/* Opened only once markRow appends a status chip — an always-present empty
+   track would eat 8px of gap on every row for nothing. */
 .row.has-state { grid-template-columns: auto auto 1fr auto; }
 
 /* inset, so the edge cannot shift the grid or fight the row's own padding. */
@@ -564,6 +568,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   font-weight: 500;
 }
 
+/* Sticks so you always know which day you have scrolled into. */
 .log-day {
   position: sticky;
   top: 0;
@@ -587,13 +592,16 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 .log-row.is-selectable { cursor: pointer; }
-.log-row.is-selectable:hover { background: var(--bg-hover); }
+/* Excludes selected rows: --bg-hover is lighter than --bg-selected, so without
+   this a hover would visually de-select the row under the cursor. */
+.log-row.is-selectable:not(.is-selected):hover { background: var(--bg-hover); }
 
 .log-row.is-selected {
   background: var(--bg-selected);
   box-shadow: inset 3px 0 0 var(--primary);
 }
 
+/* Rows with nothing to follow back keep the columns aligned. */
 .log-check-spacer { width: 16px; }
 
 .log-time {
@@ -691,6 +699,13 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+/* The shared ring is --primary, which is this button's own fill — it would
+   read as a halo. Ring in --text and hold it off the fill with a white gap. */
+.btn-primary:focus-visible {
+  outline-color: var(--text);
+  box-shadow: 0 0 0 2px var(--bg);
+}
 
 /* Equal in weight to its siblings at rest. Only the hover is red. */
 .btn-reject:hover:not(:disabled) {
