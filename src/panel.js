@@ -137,12 +137,20 @@ function recompute() {
   const unknownMutuals = countHiddenByUnknownMutuals(live, state.filters);
   const warning = $('enriched-warning');
 
+  // These filters hide every un-enriched row, which already includes every row
+  // with an unknown mutual count — one message covers both, so the branches
+  // below are ordered widest-first.
   if (usesEnrichedFilters(state.filters) && unenriched > 0) {
-    // These filters hide every un-enriched row, which already includes every
-    // row with an unknown mutual count — one message covers both.
-    warning.textContent = `${unenriched} request${unenriched === 1 ? '' : 's'} not yet enriched and therefore hidden by these filters.`;
+    const plural = unenriched === 1 ? '' : 's';
+    warning.textContent = state.filters.noMutuals
+      // Spelled out because this is the filter people reach for to bulk
+      // reject, and a missing "Followed by…" hint genuinely is not a zero.
+      ? `Hiding ${unenriched} request${plural} without loaded details. Instagram omits the mutuals hint for most requests even when mutuals exist, so these are not known to have none — use Load details to check them.`
+      : `${unenriched} request${plural} not yet enriched and therefore hidden by these filters.`;
     warning.hidden = false;
   } else if (unknownMutuals > 0) {
+    // A minimum threshold is not enriched-only — the free estimate still
+    // filters — so only the rows Instagram said nothing about get held back.
     warning.textContent = `${unknownMutuals} request${unknownMutuals === 1 ? '' : 's'} hidden: Instagram did not report a mutual count for them. Load their details to check.`;
     warning.hidden = false;
   } else {
@@ -609,9 +617,13 @@ function confirmAction({ title, body, warn }) {
 
 function readFilters() {
   const rawMax = $('f-max-followers').value;
+  // "none" is its own predicate rather than a minimum, and is enriched-only:
+  // an absent social_context is not evidence of zero mutuals.
+  const mutuals = $('f-mutuals').value;
   state.filters = {
     onlyFollowing: $('f-following').checked,
-    minMutuals: Number($('f-mutuals').value),
+    minMutuals: mutuals === 'none' ? 0 : Number(mutuals),
+    noMutuals: mutuals === 'none',
     maxFollowers: rawMax === '' ? null : Number(rawMax),
     zeroPosts: $('f-zero-posts').checked,
     emptyBio: $('f-empty-bio').checked,

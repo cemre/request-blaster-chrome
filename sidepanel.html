@@ -52,8 +52,9 @@
 
     <label class="select-chip">
       <span>Mutuals</span>
-      <select id="f-mutuals">
+      <select id="f-mutuals" title="&quot;none&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals.">
         <option value="0">any</option>
+        <option value="none">none (loaded rows)</option>
         <option value="1">1+</option>
         <option value="5">5+</option>
         <option value="10">10+</option>
@@ -77,8 +78,12 @@
       <label class="toggle-chip"><input type="checkbox" id="f-empty-bio"><span>Empty bio</span></label>
       <label class="toggle-chip"><input type="checkbox" id="f-bot-ratio"><span>Bot ratio</span></label>
     </div>
-    <p id="enriched-warning" class="warning" hidden></p>
   </details>
+
+  <!-- Outside the collapsible group on purpose: Mutuals "none" is also an
+       enriched-only filter, and its caveat must not be hidden behind a
+       collapsed <details>. -->
+  <p id="enriched-warning" class="warning" hidden></p>
 
   <div class="filter-row filter-row-end">
     <label class="select-chip">

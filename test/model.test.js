@@ -268,6 +268,44 @@ test('applyFilters: high mutual thresholds', () => {
   assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 100 }).map((r) => r.id), ['10']);
 });
 
+test('applyFilters: noMutuals only trusts an exact count', () => {
+  // The hazard this filter is designed around: sampled against a live queue,
+  // 128 of 200 pending users had no social_context and half of those actually
+  // had mutuals. An absent hint is not a zero, and this filter feeds bulk
+  // rejection, which cannot be undone.
+  const users = [
+    { pk: '1', username: 'genuinely_zero', social_context: null },
+    { pk: '2', username: 'hint_missing_but_has_38', social_context: null },
+    { pk: '3', username: 'hint_present', social_context: 'Followed by alice, bob' },
+  ];
+  const cache = {
+    1: { followers: 5, following: 5, posts: 1, bio: '', mutualCount: 0, mutualNames: [], fetchedAt: Date.now() },
+    3: { followers: 5, following: 5, posts: 1, bio: '', mutualCount: 2, mutualNames: [], fetchedAt: Date.now() },
+  };
+  const rows = mergeRows(users, {}, cache);
+
+  // Row 2 is un-enriched with no hint at all. Its count now reads unknown
+  // rather than 0 — the false zero this filter was built to defend against no
+  // longer exists in the model. The gate below is the second line of defence.
+  assert.equal(rows[1].mutuals, null);
+  assert.equal(rows[1].enriched, false);
+
+  const matched = applyFilters(rows, { ...DEFAULT_FILTERS, noMutuals: true });
+  assert.deepEqual(matched.map((r) => r.username), ['genuinely_zero'],
+    'an unknown count must not be selectable for rejection');
+});
+
+test('noMutuals is gated as an enriched-only filter', () => {
+  assert.equal(usesEnrichedFilters({ ...DEFAULT_FILTERS, noMutuals: true }), true);
+  assert.equal(usesEnrichedFilters({ ...DEFAULT_FILTERS, minMutuals: 5 }), false);
+});
+
+test('noMutuals and minMutuals stay independent', () => {
+  const rows = mergeRows(pendingFixture, statusFixture, {});
+  // Default minMutuals of 0 means "any" and must not imply "exactly zero".
+  assert.equal(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 0 }).length, 3);
+});
+
 test('applyFilters: search covers username and full name, case-insensitively', () => {
   const rows = mergeRows(pendingFixture, statusFixture, {});
   assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, search: 'SARAH' }).map((r) => r.id), ['1']);

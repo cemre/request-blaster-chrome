@@ -134,6 +134,7 @@ export function mergeRows(pendingUsers, friendshipStatuses = {}, profileCache = 
 export const DEFAULT_FILTERS = {
   onlyFollowing: false,
   minMutuals: 0,
+  noMutuals: false,
   maxFollowers: null,
   zeroPosts: false,
   emptyBio: false,
@@ -145,9 +146,18 @@ export const DEFAULT_FILTERS = {
 // Filters that can only be evaluated against a hydrated row. When any of these
 // is active, un-enriched rows are excluded rather than assumed innocent — the
 // panel surfaces how many rows that hides.
+//
+// `noMutuals` is here for a sharper reason than the rest. An absent
+// social_context does NOT mean zero mutuals: sampled against a live queue on
+// 2026-07-28, 128 of 200 pending users had no social_context, and half of a
+// random sample of those actually had mutuals (38, 9, 2, 2). Matching "0
+// mutuals" on the free estimate would hand you ~128 rows to bulk reject, half
+// of them wrong, irreversibly. So it only ever matches an exact count from
+// web_profile_info.
+//
 // `defaultPic` is deliberately absent: has_anonymous_profile_picture ships
 // with the pending list, so that filter works on every row for free.
-const ENRICHED_ONLY_FILTERS = ['maxFollowers', 'zeroPosts', 'emptyBio', 'botRatio'];
+const ENRICHED_ONLY_FILTERS = ['maxFollowers', 'zeroPosts', 'emptyBio', 'botRatio', 'noMutuals'];
 
 export function usesEnrichedFilters(filters) {
   return ENRICHED_ONLY_FILTERS.some((key) => {
@@ -182,6 +192,8 @@ export function applyFilters(rows, filters) {
     if (filters.zeroPosts && (row.posts ?? 0) !== 0) return false;
     if (filters.emptyBio && row.bio.trim() !== '') return false;
     if (filters.botRatio && !isBotRatio(row)) return false;
+    // row.mutuals is the exact count here — the enriched gate above guarantees it.
+    if (filters.noMutuals && row.mutuals !== 0) return false;
 
     return true;
   });

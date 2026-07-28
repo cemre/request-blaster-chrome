@@ -39,6 +39,17 @@ find someone you rejected by mistake.
 One line per action: timestamp, username, what you did. Grouped by day, newest
 first, with All / Accepted / Rejected filters and a username search.
 
+To read it outside the UI, open the side panel's devtools console:
+
+```js
+chrome.storage.local.get(null).then(all =>
+  console.table(Object.entries(all)
+    .filter(([k]) => k.startsWith('log:'))
+    .flatMap(([, v]) => v)
+    .sort((a, b) => b.at - a.at)
+    .map(r => ({ when: new Date(r.at).toLocaleString(), user: r.username, action: r.action }))))
+```
+
 Under **Accepted**, anyone you have not followed back gets a checkbox, and the
 toolbar offers **Follow back** — paced like any other write. Whether you already
 follow someone is derived from the log rather than tracked as its own state:
@@ -76,6 +87,14 @@ picture, and an approximate mutual count — comes free with the pending list.
 Mutual counts parsed from Instagram's "Followed by …" string are marked with a
 tilde (`~32 mutuals`); once loaded, the exact count replaces it.
 
+**Mutuals → none** is deliberately restricted to rows you have loaded details
+for. A missing "Followed by …" hint is not evidence of zero mutuals: sampled
+against a live queue on 2026-07-28, 128 of 200 pending requests carried no hint
+at all, and half of a random sample of those turned out to have mutuals — one
+with 38. Matching on the free estimate would offer ~128 rows to bulk reject
+with about half of them wrong, and rejection cannot be undone. So it requires
+an exact count, and the panel says how many rows it is holding back.
+
 Standalone — this is **not** a port of the `Safari Extension/` build. No focus
 mode, no on-page banner, no timer.
 
@@ -95,10 +114,14 @@ anything by hand.
 
 ## On-page banner
 
-Profile pages of pending requesters get Accept/Reject buttons injected directly
-beneath Instagram's own Follow button, plus a `Pending request · N of 200`
-line. Deliberately minimal — it acts on the profile in front of you and nothing
-else; sequencing stays in the side panel.
+Profile pages of pending requesters get Accept / Accept + follow / Reject
+buttons injected directly beneath Instagram's own Follow button, plus a
+`Pending request · N of 200` line. Deliberately minimal — it acts on the profile
+in front of you and nothing else; sequencing stays in the side panel.
+
+The three buttons sit on one row wherever Instagram's own button row is at
+least ~320px, which it is on desktop, and wrap to a second row rather than
+overflowing when it is narrower.
 
 It works with the panel closed: `banner.js` reads the same cached pending list
 and fetches one itself if there isn't one. Acting in either view updates the
