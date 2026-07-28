@@ -285,7 +285,7 @@ async function runFollowBack() {
 
   const queue = new ThrottledQueue({
     items: unique,
-    pacing: PACING[state.settings.pacing] || PACING.moderate,
+    pacing: PACING.moderate,
     handler: async (record) => {
       const result = await api.call('follow', { userId: record.userId });
       if (!result?.ok) return result || { ok: false, error: 'no response' };
@@ -464,10 +464,10 @@ function absorbHandledIds(ids) {
   if (changed) recompute();
 }
 
-/** Half the between-item gap, so the follow rides the same pacing setting. */
+/** Half the between-item gap, so the follow rides the same pace as the accept. */
 function followGap() {
-  const pacing = PACING[state.settings.pacing] || PACING.moderate;
-  return (pacing.min + Math.random() * (pacing.max - pacing.min)) / 2;
+  const { min, max } = PACING.moderate;
+  return (min + Math.random() * (max - min)) / 2;
 }
 
 /**
@@ -554,7 +554,7 @@ async function runBulk(action) {
 
   const queue = new ThrottledQueue({
     items: ids,
-    pacing: PACING[state.settings.pacing] || PACING.moderate,
+    pacing: PACING.moderate,
     handler: (id) => actOnce(id, action),
     onProgress: ({ done, total }) => {
       $('action-label').textContent = `${spec.gerund} ${done} / ${total}…`;
@@ -742,11 +742,6 @@ function bind() {
     recompute();
   });
 
-  $('pacing').addEventListener('change', async () => {
-    state.settings.pacing = $('pacing').value;
-    await store.saveSettings(state.settings);
-  });
-
   const reload = async () => {
     await store.clearSnapshot();
     state.doneIds.clear();
@@ -808,7 +803,6 @@ async function init() {
 
   bind();
   $('sort').value = state.settings.sort;
-  $('pacing').value = state.settings.pacing;
   setMode('requests');
 
   await loadPending();

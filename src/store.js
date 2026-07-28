@@ -15,7 +15,6 @@ export const HANDLED_KEY = 'handledIds';
 export const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export const DEFAULT_SETTINGS = {
-  pacing: 'moderate',
   sort: 'default',
   batchSize: 100,
 };

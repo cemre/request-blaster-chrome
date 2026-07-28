@@ -4,10 +4,11 @@
 // because Instagram action-blocks accounts that make friendship writes too
 // fast, and there is no published limit to code against.
 
+// One fixed pace for writes. The panel used to expose conservative/fast
+// alternatives; they were removed with the Pace picker, and nothing reads a
+// per-user value any more.
 export const PACING = {
-  conservative: { min: 3000, max: 5000 },
   moderate: { min: 1500, max: 3000 },
-  fast: { min: 500, max: 1000 },
   hydration: { min: 1800, max: 2600 },
 };
 
