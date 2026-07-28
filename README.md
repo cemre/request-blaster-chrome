@@ -101,5 +101,13 @@ Everything goes through `www.instagram.com/api/v1`. Verified 2026-07-28:
 - `has_anonymous_profile_picture` ships free on the pending list, so the
   "no profile pic" filter needs no enrichment.
 - `pk` arrives as a string.
+- Profile pictures **cannot** be loaded into an `<img>` from the extension
+  origin: `scontent-*.cdninstagram.com` sets Cross-Origin-Resource-Policy and
+  the load dies with `ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`. The same fetch
+  from an instagram.com page succeeds, so `src/avatars.js` routes them through
+  the content script's `avatar` op as data URLs — about 6KB each, ~1.1MB for a
+  full 200-row queue, memory-cached, six concurrent. That op is restricted to
+  `cdninstagram.com` / `fbcdn.net` over HTTPS so it can't be used as a general
+  fetch relay.
 
 Full design and findings: [`docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md`](../docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md)

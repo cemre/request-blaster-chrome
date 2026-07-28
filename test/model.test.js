@@ -112,6 +112,20 @@ test('applyFilters: relationship filters work on un-enriched rows', () => {
   );
 });
 
+test('applyFilters: high mutual thresholds', () => {
+  // Real social_context counts run into the hundreds, hence the 50+/100+ steps.
+  const busy = [
+    { pk: '10', username: 'a', social_context: 'Followed by x + 186 more' },
+    { pk: '11', username: 'b', social_context: 'Followed by x + 59 more' },
+    { pk: '12', username: 'c', social_context: 'Followed by x, y' },
+  ];
+  const rows = mergeRows(busy, {}, {});
+  assert.deepEqual(rows.map((r) => r.mutuals), [187, 60, 2]);
+
+  assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 50 }).map((r) => r.id), ['10', '11']);
+  assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 100 }).map((r) => r.id), ['10']);
+});
+
 test('applyFilters: search covers username and full name, case-insensitively', () => {
   const rows = mergeRows(pendingFixture, statusFixture, {});
   assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, search: 'SARAH' }).map((r) => r.id), ['1']);

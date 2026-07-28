@@ -5,6 +5,7 @@
 // textContent, never innerHTML — usernames and bios are attacker-controlled.
 
 import { formatCount } from './model.js';
+import { PLACEHOLDER, resolveAvatar } from './avatars.js';
 
 const PAGE_SIZE = 60;
 
@@ -132,11 +133,16 @@ export class ListRenderer {
     avatarButton.title = `Open @${row.username} in the main tab`;
     const avatar = document.createElement('img');
     avatar.className = 'avatar';
-    avatar.src = row.avatar;
+    // Not row.avatar directly: the CDN's CORP header blocks that from this
+    // origin. Proxied through the Instagram tab, resolving asynchronously.
+    avatar.src = PLACEHOLDER;
     avatar.alt = '';
-    avatar.loading = 'lazy';
     avatar.referrerPolicy = 'no-referrer';
     avatarButton.appendChild(avatar);
+
+    resolveAvatar(row.avatar).then((dataUrl) => {
+      if (dataUrl) avatar.src = dataUrl;
+    });
     node.appendChild(avatarButton);
 
     const main = el('div', 'row-main');
