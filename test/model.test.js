@@ -6,6 +6,7 @@ import {
   DEFAULT_FILTERS,
   applyFilters,
   formatCount,
+  formatShownCount,
   isBotRatio,
   isDefaultPic,
   mergeRows,
@@ -255,4 +256,15 @@ test('formatCount abbreviates the way a profile page does', () => {
   assert.equal(formatCount(12040), '12k');
   assert.equal(formatCount(1500000), '1.5m');
   assert.equal(formatCount(null), '—');
+});
+
+test('formatShownCount names the unit when the list is whole', () => {
+  assert.equal(formatShownCount(199, 199), '199 requests');
+  assert.equal(formatShownCount(1, 1), '1 request');
+  assert.equal(formatShownCount(0, 0), '0 requests');
+});
+
+test('formatShownCount reports both numbers when a filter is narrowing the list', () => {
+  assert.equal(formatShownCount(5, 199), '5 of 199');
+  assert.equal(formatShownCount(0, 199), '0 of 199');
 });

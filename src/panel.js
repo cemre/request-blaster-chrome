@@ -12,6 +12,7 @@ import { ListRenderer, renderLog } from './render.js';
 import {
   DEFAULT_FILTERS,
   applyFilters,
+  formatShownCount,
   mergeRows,
   sortRows,
   toCachedProfile,
@@ -124,11 +125,7 @@ function recompute() {
   renderer.setRows(state.visible);
   renderer.setSelection(state.selected);
 
-  $('total-count').textContent = String(live.length);
-  $('shown-count').textContent =
-    state.visible.length === live.length
-      ? `${live.length} shown`
-      : `${state.visible.length} of ${live.length} shown`;
+  $('shown-count').textContent = formatShownCount(state.visible.length, live.length);
 
   const unenriched = live.filter((row) => !row.enriched).length;
   const warning = $('enriched-warning');

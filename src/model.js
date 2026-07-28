@@ -221,3 +221,13 @@ export function formatCount(value) {
   const millions = value / 1000000;
   return `${millions < 10 ? millions.toFixed(1).replace(/\.0$/, '') : Math.round(millions)}m`;
 }
+
+/**
+ * The single count line under the filters. Says what it is counting when the
+ * list is whole, and both numbers when a filter is narrowing it — the panel has
+ * no heading left to explain a bare number.
+ */
+export function formatShownCount(visible, total) {
+  if (visible !== total) return `${visible} of ${total}`;
+  return `${total} request${total === 1 ? '' : 's'}`;
+}
