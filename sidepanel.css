@@ -1,10 +1,68 @@
-/* Follows the house convention from the existing extension: color-scheme plus
-   currentColor + opacity, so light and dark both work without a theme table. */
+/* Values are Instagram's own, so the panel and the banner content.js injects
+   speak the same language. This is a deliberate departure from the
+   currentColor + opacity convention the other surfaces use: one hue at eleven
+   opacities cannot express hierarchy, and opacity-dimmed text kept landing
+   under 4.5:1. See docs/superpowers/specs/2026-07-28-sidepanel-visual-overhaul-design.md.
+
+   color-scheme stays so native controls — scrollbars, select menus, the search
+   field's clear button, the dialog backdrop — still follow the OS. */
 
 :root {
   color-scheme: light dark;
-  --accent: #E1306C;
+
+  --bg: #FFFFFF;
+  --bg-elevated: #FFFFFF;
+  --bg-hover: #FAFAFA;
+  --bg-selected: #F5F5F5;
+
+  --text: #262626;
+  --text-secondary: #737373;
+  --text-tertiary: #A8A8A8;
+
+  --border: #DBDBDB;
+  --border-strong: #C7C7C7;
+
+  --secondary-bg: #EFEFEF;
+  --secondary-bg-hover: #DBDBDB;
+
+  --primary: #4A5DF9;
+  --primary-hover: #4150F7;
+  --primary-text: #FFFFFF;
+
+  --danger: #ED4956;
+  --danger-bg: #FDEBEC;
+
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-full: 999px;
+
   --gap: 10px;
+
+  /* Removed in the next commit, once every rule below has moved onto the
+     tokens above. Keeping it here means this commit changes nothing. */
+  --accent: #E1306C;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --bg-elevated: #262626;
+    --bg-hover: #141414;
+    --bg-selected: #1F1F1F;
+
+    --text: #F5F5F5;
+    --text-secondary: #A8A8A8;
+    --text-tertiary: #737373;
+
+    --border: #363636;
+    --border-strong: #4A4A4A;
+
+    --secondary-bg: #363636;
+    --secondary-bg-hover: #4A4A4A;
+
+    --danger-bg: #2A1416;
+  }
 }
 
 * { box-sizing: border-box; }
