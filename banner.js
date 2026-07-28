@@ -29,6 +29,10 @@
 
   const HOST_ID = 'request-blaster-banner';
   const TICK_MS = 600;
+  // How long to wait for Instagram's header before assuming it will never
+  // match. Its profile header renders client-side, so on a fresh load the
+  // anchor is simply not there yet — see place().
+  const ANCHOR_GRACE_MS = 3000;
 
   const FOLLOW_LABELS = new Set(['Follow', 'Following', 'Follow back', 'Requested', 'Message']);
   const NON_PROFILE_PATHS = [
@@ -40,6 +44,7 @@
   let shadow = null;
   let target = null; // { user, position, total } for the current profile
   let snapshotPromise = null;
+  let anchorMissingSince = 0; // 0 while the anchor is present, or before we look
 
   // ------------------------------------------------------------- page state
 
@@ -236,6 +241,9 @@
 
   function detach() {
     target = null;
+    // Each profile gets its own grace window; without this a page that fell
+    // back to the floating bar would make the next one float immediately.
+    anchorMissingSince = 0;
     if (host) host.remove();
   }
 
@@ -276,7 +284,11 @@
     if (host.style.marginRight !== right) host.style.marginRight = right;
   }
 
-  /** Insert (or re-insert after a React re-render) at the right place. */
+  /**
+   * Insert (or re-insert after a React re-render) at the right place. Returns
+   * false while there is nowhere to put it yet, in which case nothing is on
+   * the page at all — the caller need do nothing; the next tick retries.
+   */
   function place() {
     if (!host) {
       host = buildHost();
@@ -284,13 +296,26 @@
 
     const anchor = findAnchor();
     if (anchor) {
+      anchorMissingSince = 0;
       host.dataset.mode = 'inline';
       if (host.previousElementSibling !== anchor || !host.isConnected) anchor.after(host);
       alignToButtonRow(anchor);
       return true;
     }
 
-    // Header not matched — keep the feature usable rather than vanishing.
+    // No anchor. Instagram renders its profile header client-side and
+    // re-renders it on its own schedule, so much of the time this only means
+    // "not there yet" — falling straight to the floating bar would flash three
+    // buttons across the bottom of the viewport and then move them. Show
+    // nothing until we know which case this is.
+    if (anchorMissingSince === 0) anchorMissingSince = Date.now();
+    if (Date.now() - anchorMissingSince < ANCHOR_GRACE_MS) {
+      if (host.isConnected) host.remove();
+      return false;
+    }
+
+    // Waited it out and the header still doesn't match — keep the feature
+    // usable rather than vanishing.
     host.dataset.mode = 'float';
     host.style.marginLeft = '';
     host.style.marginRight = '';

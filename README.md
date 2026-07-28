@@ -140,6 +140,13 @@ The insertion point is found via semantic markup — the direct child of
 Instagram's generated class names. If that ever stops matching, the banner
 falls back to a floating bar rather than disappearing.
 
+That fallback waits 3 seconds first. Instagram renders the profile header
+client-side, so for the first moment of every load there is no anchor yet —
+falling back on the first miss meant three buttons flashing across the bottom
+of the viewport and then jumping up into the header. Nothing goes on the page
+until there is somewhere to put it, and the same grace window covers
+Instagram's mid-session re-renders of the header.
+
 Width is measured, not assumed. That section is not always as wide as the
 buttons inside it — Instagram's narrow layout insets them — so the banner
 measures the bounding box of the real buttons and sets its own margins to
