@@ -38,10 +38,6 @@
   --r-full: 999px;
 
   --gap: 10px;
-
-  /* Removed in the next commit, once every rule below has moved onto the
-     tokens above. Keeping it here means this commit changes nothing. */
-  --accent: #E1306C;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -102,14 +98,14 @@ body:not([data-state='loading']) .loading { display: none !important; }
   gap: 8px;
   padding: 18px var(--gap);
   font-size: 12px;
-  opacity: 0.7;
+  color: var(--text-secondary);
 }
 
 .spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid color-mix(in srgb, currentColor 20%, transparent);
-  border-top-color: var(--accent);
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   flex: none;
@@ -130,6 +126,8 @@ body {
   display: flex;
   flex-direction: column;
   font: 13px/1.4 system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
 
 h1 {
@@ -143,8 +141,7 @@ h1 {
 
 .panel-header {
   padding: var(--gap);
-  border-bottom: 1px solid currentColor;
-  border-bottom-color: color-mix(in srgb, currentColor 12%, transparent);
+  border-bottom: 1px solid var(--border);
 }
 
 .header-top {
@@ -153,36 +150,35 @@ h1 {
   gap: 8px;
 }
 
-.count-badge {
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  opacity: 0.65;
-}
-
 .modes {
   display: flex;
-  gap: 4px;
+  gap: 16px;
   margin-top: 8px;
 }
 
 .mode {
   font: inherit;
   font-size: 12px;
-  padding: 4px 10px;
+  padding: 9px 0 7px;
   border: 0;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
-  color: inherit;
-  opacity: 0.6;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
-.mode:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+.mode:hover { color: var(--text); }
+
+.mode:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 
 .mode.is-active {
-  opacity: 1;
-  font-weight: 620;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+  font-weight: 500;
+  border-bottom-color: var(--text);
 }
 
 .hydration {
@@ -194,7 +190,7 @@ h1 {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  opacity: 0.75;
+  color: var(--text-secondary);
 }
 
 .hydration-line span { flex: 1; font-variant-numeric: tabular-nums; }
@@ -203,14 +199,14 @@ h1 {
   height: 3px;
   margin-top: 6px;
   border-radius: 2px;
-  background: color-mix(in srgb, currentColor 12%, transparent);
+  background: var(--secondary-bg);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   width: 0;
-  background: var(--accent);
+  background: var(--primary);
   transition: width 0.2s;
 }
 
@@ -222,8 +218,9 @@ h1 {
   gap: 8px;
   padding: 8px var(--gap);
   font-size: 12px;
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-bottom: 1px solid var(--border);
 }
 
 .banner span { flex: 1; }
@@ -235,18 +232,20 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-bottom: 1px solid var(--border);
 }
 
 .search {
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 9px;
   font: inherit;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-  background: transparent;
-  color: inherit;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
 }
+
+.search::placeholder { color: var(--text-tertiary); }
 
 .filter-row {
   display: flex;
@@ -263,16 +262,31 @@ h1 {
   gap: 5px;
   padding: 4px 8px;
   font-size: 12px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
 }
 
+.toggle-chip:hover,
+.select-chip:hover { border-color: var(--border-strong); color: var(--text); }
+
 .toggle-chip:has(input:checked) {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--secondary-bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+  font-weight: 500;
 }
+
+.toggle-chip:has(input:focus-visible),
+.select-chip:has(select:focus-visible),
+.select-chip:has(input:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.toggle-chip input { accent-color: var(--primary); }
 
 .select-chip select,
 .select-chip .num {
@@ -288,16 +302,16 @@ h1 {
 .filter-group summary {
   font-size: 12px;
   cursor: pointer;
-  opacity: 0.8;
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
 
-.filter-group summary em { opacity: 0.6; font-style: normal; }
+.filter-group summary em { color: var(--text-tertiary); font-style: normal; }
 
 .warning {
   margin: 6px 0 0;
   font-size: 11px;
-  opacity: 0.7;
+  color: var(--text-secondary);
 }
 
 .result-line {
@@ -307,7 +321,7 @@ h1 {
   gap: 8px;
 }
 
-.muted { opacity: 0.6; font-size: 12px; font-variant-numeric: tabular-nums; }
+.muted { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------- bulk + progress */
 
@@ -321,10 +335,10 @@ h1 {
   z-index: 5;
   margin: 0 8px 8px;
   padding: 8px 10px;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-  background: Canvas;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.22);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 -1px 0 var(--border), 0 -8px 24px rgba(0, 0, 0, 0.12);
 }
 
 /* Reserve room so the last row can always be scrolled clear of the bar. */
@@ -367,7 +381,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 .status {
   padding: 0 var(--gap);
   font-size: 11px;
-  opacity: 0.6;
+  color: var(--text-secondary);
   min-height: 16px;
   font-variant-numeric: tabular-nums;
 }
@@ -389,25 +403,30 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   align-items: start;
   gap: 8px;
   padding: 9px var(--gap);
-  border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
 
-/* Opened only once markRow appends a status chip — an always-present empty
-   track would eat 8px of gap on every row for nothing. */
+.row:hover { background: var(--bg-hover); }
+
 .row.has-state { grid-template-columns: auto auto 1fr auto; }
 
-.row.is-selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* inset, so the edge cannot shift the grid or fight the row's own padding. */
+.row.is-selected {
+  background: var(--bg-selected);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
 .row.is-busy { opacity: 0.55; }
 .row.is-accepted,
 .row.is-rejected { opacity: 0.4; }
-.row.is-failed { background: color-mix(in srgb, #d32f2f 10%, transparent); }
+.row.is-failed { background: var(--danger-bg); }
 
 .row-check {
-  width: 26px;
-  height: 26px;
-  margin: 4px 0 0;
-  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  margin: 5px 0 0;
+  accent-color: var(--primary);
   flex: none;
   cursor: pointer;
 }
@@ -425,7 +444,8 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   height: 38px;
   border-radius: 50%;
   object-fit: cover;
-  background: color-mix(in srgb, currentColor 12%, transparent);
+  background: var(--secondary-bg);
+  border: 1px solid var(--border);
 }
 
 .row-main { min-width: 0; }
@@ -452,6 +472,13 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 
 .link-button:hover { text-decoration: underline; }
 
+.link-button:focus-visible,
+.avatar-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .username { font-weight: 620; }
 
 .row-name {
@@ -463,13 +490,20 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: color-mix(in srgb, currentColor 12%, transparent);
-  opacity: 0.85;
+  background: var(--secondary-bg);
+  color: var(--text-secondary);
 }
 
 .chip-following {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  opacity: 1;
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Emitted by render.js but unstyled until now, so verified accounts were
+   indistinguishable from private ones. Blue is Instagram's own meaning here. */
+.chip-verified {
+  color: var(--primary);
+  font-weight: 500;
 }
 
 .row-name,
@@ -477,22 +511,22 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 .row-mutuals,
 .row-bio {
   font-size: 11.5px;
-  opacity: 0.7;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .row-stats { font-variant-numeric: tabular-nums; }
-.row-mutuals { opacity: 0.5; }
-.row-bio { opacity: 0.6; font-style: italic; }
+.row-mutuals { color: var(--text-tertiary); }
+.row-bio { color: var(--text-tertiary); }
 
 .row-state {
   align-self: center;
   max-width: 96px;
   font-size: 10px;
   text-align: right;
-  opacity: 0.7;
+  color: var(--text-secondary);
 }
 
 /* ------------------------------------------------------------ action log */
@@ -502,38 +536,45 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-bottom: 1px solid var(--border);
 }
 
 .log-tab {
   font: inherit;
   font-size: 12px;
   padding: 4px 12px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
   background: transparent;
-  color: inherit;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
-.log-tab.is-active {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  font-weight: 600;
+.log-tab:hover { border-color: var(--border-strong); color: var(--text); }
+
+.log-tab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
-/* Sticks so you always know which day you have scrolled into. */
+.log-tab.is-active {
+  background: var(--secondary-bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+  font-weight: 500;
+}
+
 .log-day {
   position: sticky;
   top: 0;
   z-index: 1;
   padding: 6px var(--gap) 4px;
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  opacity: 0.55;
-  background: Canvas;
+  color: var(--text-tertiary);
+  background: var(--bg);
 }
 
 .log-row {
@@ -542,24 +583,28 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   align-items: center;
   gap: 8px;
   padding: 6px var(--gap);
-  border-bottom: 1px solid color-mix(in srgb, currentColor 6%, transparent);
+  border-bottom: 1px solid var(--border);
 }
 
 .log-row.is-selectable { cursor: pointer; }
-.log-row.is-selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.log-row.is-selectable:hover { background: var(--bg-hover); }
 
-/* Rows with nothing to follow back keep the columns aligned. */
-.log-check-spacer { width: 26px; }
+.log-row.is-selected {
+  background: var(--bg-selected);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.log-check-spacer { width: 16px; }
 
 .log-time {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  opacity: 0.5;
+  color: var(--text-tertiary);
 }
 
 .log-user {
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -570,15 +615,22 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   padding: 2px 6px;
   border-radius: 4px;
   white-space: nowrap;
-  background: color-mix(in srgb, currentColor 10%, transparent);
-  opacity: 0.8;
+  background: var(--secondary-bg);
+  color: var(--text-secondary);
 }
 
 .log-action-accept,
 .log-action-acceptFollow,
 .log-action-follow {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  opacity: 1;
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* The log had no rejected treatment at all; every action read the same. */
+.log-action-reject {
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-weight: 500;
 }
 
 .log-footer {
@@ -592,7 +644,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   padding: 24px var(--gap);
   text-align: center;
   font-size: 12px;
-  opacity: 0.55;
+  color: var(--text-secondary);
 }
 
 /* --------------------------------------------------------------- buttons */
@@ -601,54 +653,120 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 .icon-btn {
   font: inherit;
   font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  background: transparent;
-  color: inherit;
+  padding: 5px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  background: var(--secondary-bg);
+  color: var(--text);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .btn:hover:not(:disabled),
-.icon-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.icon-btn:hover:not(:disabled) { background: var(--secondary-bg-hover); }
+
+.btn:focus-visible,
+.icon-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 
 .btn:disabled { opacity: 0.4; cursor: default; }
 
-.btn-small { font-size: 11px; padding: 2px 8px; }
-.btn-quiet { opacity: 0.7; }
+.btn-small { font-size: 11px; padding: 3px 8px; }
 
-.btn-accept {
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+.btn-quiet {
+  background: transparent;
+  color: var(--text-secondary);
 }
 
-/* Same family as Accept — it is an accept, with a follow tacked on — but
-   filled, since it is the more consequential of the two. */
-.btn-accept-follow {
-  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
-  font-weight: 600;
+.btn-quiet:hover:not(:disabled) { background: var(--secondary-bg); color: var(--text); }
+
+/* Used by the Load button while nothing has been loaded yet — the one moment
+   the panel has a single obvious next action. */
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-text);
+  font-weight: 500;
 }
 
-.btn-reject { opacity: 0.85; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
 
-.icon-btn { font-size: 11px; padding: 3px 8px; }
+/* Equal in weight to its siblings at rest. Only the hover is red. */
+.btn-reject:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.icon-btn { font-size: 11px; padding: 4px 8px; }
+
+/* Icon-only toggle: the search affordance in the filter bar. */
+.icon-toggle {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.icon-toggle:hover { background: var(--secondary-bg); color: var(--text); }
+
+.icon-toggle.is-active {
+  background: var(--secondary-bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.icon-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* An inline text link inside a sentence, not a control in its own right. */
+.link-inline {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-inline:hover { color: var(--primary); }
+
+.link-inline:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 
 /* ---------------------------------------------------------------- dialog */
 
 .confirm {
-  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
   padding: 16px;
   max-width: 280px;
-  color: inherit;
-  background: Canvas;
+  color: var(--text);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
 }
 
 .confirm h2 { font-size: 14px; margin: 0 0 8px; }
-.confirm p { margin: 0 0 10px; font-size: 12px; opacity: 0.8; }
-.confirm-warn { color: #d32f2f; opacity: 1 !important; font-weight: 600; }
+.confirm p { margin: 0 0 10px; font-size: 12px; color: var(--text-secondary); }
+
+.confirm-warn {
+  color: var(--danger) !important;
+  font-weight: 500;
+}
 
 .confirm menu {
   display: flex;
