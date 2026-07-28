@@ -87,6 +87,14 @@ picture, and an approximate mutual count — comes free with the pending list.
 Mutual counts parsed from Instagram's "Followed by …" string are marked with a
 tilde (`~32 mutuals`); once loaded, the exact count replaces it.
 
+**Mutuals → none** is deliberately restricted to rows you have loaded details
+for. A missing "Followed by …" hint is not evidence of zero mutuals: sampled
+against a live queue on 2026-07-28, 128 of 200 pending requests carried no hint
+at all, and half of a random sample of those turned out to have mutuals — one
+with 38. Matching on the free estimate would offer ~128 rows to bulk reject
+with about half of them wrong, and rejection cannot be undone. So it requires
+an exact count, and the panel says how many rows it is holding back.
+
 Standalone — this is **not** a port of the `Safari Extension/` build. No focus
 mode, no on-page banner, no timer.
 

@@ -133,7 +133,12 @@ function recompute() {
   const unenriched = live.filter((row) => !row.enriched).length;
   const warning = $('enriched-warning');
   if (usesEnrichedFilters(state.filters) && unenriched > 0) {
-    warning.textContent = `${unenriched} request${unenriched === 1 ? '' : 's'} not yet enriched and therefore hidden by these filters.`;
+    const plural = unenriched === 1 ? '' : 's';
+    warning.textContent = state.filters.noMutuals
+      // Spelled out because this is the filter people reach for to bulk
+      // reject, and a missing "Followed by…" hint genuinely is not a zero.
+      ? `Hiding ${unenriched} request${plural} without loaded details. Instagram omits the mutuals hint for most requests even when mutuals exist, so these are not known to have none — use Load details to check them.`
+      : `${unenriched} request${plural} not yet enriched and therefore hidden by these filters.`;
     warning.hidden = false;
   } else {
     warning.hidden = true;
@@ -599,9 +604,13 @@ function confirmAction({ title, body, warn }) {
 
 function readFilters() {
   const rawMax = $('f-max-followers').value;
+  // "none" is its own predicate rather than a minimum, and is enriched-only:
+  // an absent social_context is not evidence of zero mutuals.
+  const mutuals = $('f-mutuals').value;
   state.filters = {
     onlyFollowing: $('f-following').checked,
-    minMutuals: Number($('f-mutuals').value),
+    minMutuals: mutuals === 'none' ? 0 : Number(mutuals),
+    noMutuals: mutuals === 'none',
     maxFollowers: rawMax === '' ? null : Number(rawMax),
     zeroPosts: $('f-zero-posts').checked,
     emptyBio: $('f-empty-bio').checked,
