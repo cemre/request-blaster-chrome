@@ -6,7 +6,7 @@
   <link rel="stylesheet" href="sidepanel.css">
   <script type="module" src="src/panel.js"></script>
 </head>
-<body>
+<body data-state="loading">
 
 <header class="panel-header">
   <div class="header-top">
@@ -27,7 +27,13 @@
 
 <div id="banner" class="banner" hidden>
   <span id="banner-text"></span>
+  <button id="banner-retry" class="icon-btn" hidden>Retry</button>
   <button id="banner-dismiss" class="icon-btn">Dismiss</button>
+</div>
+
+<div class="loading">
+  <div class="spinner"></div>
+  <span id="loading-text">Loading pending requests…</span>
 </div>
 
 <section class="filters">

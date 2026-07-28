@@ -143,6 +143,17 @@ const OPERATIONS = {
   },
 };
 
+// This file arrives two ways: the manifest's content_scripts declaration on
+// navigation, and chrome.scripting.executeScript when the panel finds a tab
+// that predates the extension. Both can land in the same frame, and a second
+// listener would answer every message twice. The isolated world persists
+// across injections, so this flag is a reliable guard.
+if (!window.__requestBlasterListenerBound) {
+  window.__requestBlasterListenerBound = true;
+  bindMessageListener();
+}
+
+function bindMessageListener() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'RB_PING') {
     sendResponse({ ok: true });
@@ -163,3 +174,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return true; // keep the channel open for the async response
 });
+}

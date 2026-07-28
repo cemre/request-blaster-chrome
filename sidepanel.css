@@ -9,6 +9,47 @@
 
 * { box-sizing: border-box; }
 
+/* The UA stylesheet's [hidden] { display: none } loses to any author
+   `display` rule, so every flex container below would ignore its hidden
+   attribute without this. */
+[hidden] { display: none !important; }
+
+/* Gate the whole working UI on a successful load. While loading or after a
+   fatal error there is nothing to filter, select or act on, so showing those
+   controls just invites clicks that do nothing. */
+body:not([data-state='ready']) .filters,
+body:not([data-state='ready']) .bulk-bar,
+body:not([data-state='ready']) .action-progress,
+body:not([data-state='ready']) .list-scroll,
+body:not([data-state='ready']) .hydration { display: none !important; }
+
+body:not([data-state='loading']) .loading { display: none !important; }
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px var(--gap);
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+}
+
 html, body {
   height: 100%;
   margin: 0;

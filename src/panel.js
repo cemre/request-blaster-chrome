@@ -39,12 +39,23 @@ let renderer;
 
 // ---------------------------------------------------------------- messaging
 
+/** 'loading' | 'ready' | 'error' — CSS gates the working UI on this. */
+function setState(next) {
+  document.body.dataset.state = next;
+}
+
 function setStatus(text) {
   $('status').textContent = text || '';
 }
 
-function showBanner(text) {
+/** Progress line inside the loading block, so it's visible before the UI is. */
+function setLoadingText(text) {
+  $('loading-text').textContent = text;
+}
+
+function showBanner(text, { retry = false } = {}) {
   $('banner-text').textContent = text;
+  $('banner-retry').hidden = !retry;
   $('banner').hidden = false;
 }
 
@@ -52,16 +63,21 @@ function hideBanner() {
   $('banner').hidden = true;
 }
 
-function reportError(err) {
-  if (err?.code === 'logged_out') {
-    showBanner('You are not signed in to Instagram. Sign in on the main tab, then hit Refresh.');
-  } else if (err?.code === 'blocked') {
-    showBanner('Instagram is rate limiting this account. Both queues stopped — wait a while before retrying.');
-  } else if (err?.code === 'content_not_ready') {
-    showBanner('The Instagram tab is not responding. Reload it, then hit Refresh.');
-  } else {
-    showBanner(err?.message || String(err));
+function describeError(err) {
+  switch (err?.code) {
+    case 'logged_out':
+      return 'You are not signed in to Instagram. Sign in on the main tab, then retry.';
+    case 'blocked':
+      return 'Instagram is rate limiting this account. Wait a while before retrying.';
+    case 'content_not_ready':
+      return 'Could not reach the Instagram tab. Reload that tab, then retry.';
+    default:
+      return err?.message || String(err);
   }
+}
+
+function reportError(err) {
+  showBanner(describeError(err), { retry: true });
 }
 
 // ------------------------------------------------------------------- render
@@ -118,19 +134,21 @@ async function loadPending({ useSnapshot = true } = {}) {
   if (state.loading) return;
   state.loading = true;
   hideBanner();
-  setStatus('Loading pending requests…');
+  setState('loading');
+  setLoadingText('Loading pending requests…');
+  setStatus('');
 
   try {
     let snapshot = useSnapshot ? await store.loadSnapshot() : null;
 
     if (!snapshot) {
       const { users, capped } = await api.fetchAllPending(({ total }) =>
-        setStatus(`Fetched ${total} requests…`)
+        setLoadingText(`Fetched ${total} requests…`)
       );
-      setStatus(`Checking follow status for ${users.length}…`);
+      setLoadingText(`Checking follow status for ${users.length}…`);
       const statuses = await api.fetchFollowStatuses(
         users.map((user) => String(user.pk)),
-        ({ done, total }) => setStatus(`Checking follow status ${done} / ${total}…`)
+        ({ done, total }) => setLoadingText(`Checking follow status ${done} / ${total}…`)
       );
       snapshot = { users, statuses, capped };
       await store.saveSnapshot(snapshot);
@@ -148,12 +166,14 @@ async function loadPending({ useSnapshot = true } = {}) {
         ? `Instagram only exposes ${api.SERVER_PAGE_CAP} at a time — clear these, then Refresh for the next batch.`
         : ''
     );
+    setState('ready');
+    recompute();
   } catch (err) {
     reportError(err);
     setStatus('');
+    setState('error');
   } finally {
     state.loading = false;
-    recompute();
   }
 }
 
@@ -366,12 +386,15 @@ function bind() {
     await store.saveSettings(state.settings);
   });
 
-  $('refresh').addEventListener('click', async () => {
+  const reload = async () => {
     await store.clearSnapshot();
     state.doneIds.clear();
     state.selected.clear();
     await loadPending({ useSnapshot: false });
-  });
+  };
+
+  $('refresh').addEventListener('click', reload);
+  $('banner-retry').addEventListener('click', reload);
 
   $('load-batch').addEventListener('click', () => runHydrationBatch());
   $('stop-hydration').addEventListener('click', () => state.hydrationQueue?.stop());

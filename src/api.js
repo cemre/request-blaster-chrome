@@ -47,14 +47,34 @@ async function waitForTabComplete(id) {
   return false;
 }
 
+async function pingOnce(id) {
+  try {
+    const response = await chrome.tabs.sendMessage(id, { type: 'RB_PING' });
+    return Boolean(response?.ok);
+  } catch {
+    // No listener — either the page is mid-navigation, or the content script
+    // was never injected into this tab at all.
+    return false;
+  }
+}
+
 async function waitForContentScript(id) {
   for (let attempt = 0; attempt < PING_ATTEMPTS; attempt += 1) {
-    try {
-      const response = await chrome.tabs.sendMessage(id, { type: 'RB_PING' });
-      if (response?.ok) return true;
-    } catch {
-      // No listener yet — the page is mid-navigation.
+    if (await pingOnce(id)) return true;
+
+    // A few failed pings means this is probably not a mid-navigation blip but
+    // a tab that predates the extension being loaded — `content_scripts` does
+    // not retroactively inject into those. Inject explicitly and re-ping.
+    // content.js guards against running twice.
+    if (attempt === 2) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: id }, files: ['content.js'] });
+        if (await pingOnce(id)) return true;
+      } catch {
+        // Restricted page, or the scripting permission was declined.
+      }
     }
+
     await sleep(PING_INTERVAL_MS);
   }
   return false;

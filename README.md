@@ -17,6 +17,15 @@ mode, no on-page banner, no timer.
 
 Chrome 114+ (side panel API).
 
+Instagram tabs that were already open when you loaded or reloaded the extension
+do **not** get the content script from the manifest — Chrome only injects on
+navigation. The extension injects into them explicitly on install and again on
+demand when the panel can't reach a tab, so you shouldn't need to reload
+anything by hand.
+
+There is no on-page banner. All interaction happens in the side panel; that is
+the whole point of the design.
+
 ## How it works
 
 - **`content.js`** — stateless proxy. Scrapes the CSRF token from
