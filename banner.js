@@ -128,6 +128,10 @@
   // without us detecting anything. Fallbacks are the observed light values.
   const STYLES = `
     :host { all: initial; display: block; }
+    /* The UA stylesheet's [hidden] { display: none } loses to any author
+       display rule, and both .wrap and .status set one. Without this the
+       hidden element still lays out — an empty grey bar under the buttons. */
+    [hidden] { display: none !important; }
     .wrap {
       display: flex; gap: 8px; align-items: stretch;
       font-family: system-ui, -apple-system, sans-serif;
@@ -227,9 +231,9 @@
     accept.disabled = false;
     reject.disabled = false;
 
-    const bits = [`Pending request · ${position} of ${total}`];
-    if (user.social_context) bits.push(user.social_context);
-    shadow.querySelector('.meta').textContent = bits.join(' · ');
+    // Not social_context: Instagram already renders its own "Followed by …"
+    // line in the header just above, and the two disagree on names and count.
+    shadow.querySelector('.meta').textContent = `Pending request · ${position} of ${total}`;
 
     const act = (op, doneLabel, busyLabel) => async () => {
       accept.disabled = true;
