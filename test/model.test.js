@@ -5,7 +5,10 @@ import {
   BOT_RATIO_MIN_FOLLOWING,
   DEFAULT_FILTERS,
   applyFilters,
+  approximateMutuals,
+  countHiddenByUnknownMutuals,
   formatCount,
+  formatMutuals,
   isBotRatio,
   isDefaultPic,
   mergeRows,
@@ -73,7 +76,9 @@ test('mergeRows combines bulk data and leaves un-enriched rows honest', () => {
   assert.equal(rows[0].mutuals, 12);
   assert.equal(rows[0].enriched, false);
   assert.equal(rows[0].followers, null);
-  assert.equal(rows[1].mutuals, 0);
+  // No social_context means Instagram told us nothing about mutuals — not that
+  // there are none. Asserting 0 here is what let the panel invent a count.
+  assert.equal(rows[1].mutuals, null);
   assert.equal(rows[1].isPrivate, true);
 });
 
@@ -93,6 +98,143 @@ test('mergeRows prefers the exact mutual count once hydrated', () => {
 test('mergeRows tolerates numeric and string status keys', () => {
   const rows = mergeRows(pendingFixture, { '1': { following: true } }, {});
   assert.equal(rows[0].following, true);
+});
+
+// --------------------------------------------------- unknown vs zero mutuals
+//
+// Regression cover for the panel claiming "0 mutuals" about people the user
+// demonstrably shared mutuals with. Measured against the live queue on
+// 2026-07-28: of 200 pending requests only 73 carried a `social_context`
+// string, and the other 127 omitted the field entirely. Reading that absence
+// as zero made the panel assert a fact it had never checked, on the majority
+// of every queue.
+
+test('approximateMutuals separates "no data" from a real zero', () => {
+  assert.equal(approximateMutuals('Followed by alice, bob + 3 more'), 5);
+  assert.equal(approximateMutuals('Followed by alice'), 1);
+
+  // Absent, empty or unrelated context is unknown — never zero.
+  assert.equal(approximateMutuals(undefined), null, 'field absent on the API row');
+  assert.equal(approximateMutuals(null), null);
+  assert.equal(approximateMutuals(''), null);
+  assert.equal(approximateMutuals('New to Instagram'), null);
+  assert.equal(approximateMutuals(42), null);
+});
+
+test('mergeRows reports unknown mutuals as null, not zero', () => {
+  // The two accounts from the bug report. Both arrived with no social_context
+  // while their profile pages showed 2 and 17 mutuals respectively.
+  const rows = mergeRows(
+    [
+      { pk: '90', username: 'usechede', full_name: 'Daniel Useche', is_private: true },
+      { pk: '91', username: 'grnwave98', full_name: 'Toby Smith', is_private: true, social_context: null },
+    ],
+    {},
+    {}
+  );
+
+  assert.equal(rows[0].mutuals, null);
+  assert.equal(rows[1].mutuals, null);
+  assert.equal(rows[0].approxMutuals, null);
+});
+
+test('mergeRows replaces an unknown count with the exact one on hydration', () => {
+  const users = [{ pk: '90', username: 'usechede' }];
+  assert.equal(mergeRows(users, {}, {})[0].mutuals, null);
+
+  const cache = {
+    90: { followers: 10900, following: 7985, posts: 293, bio: '', mutualCount: 2, mutualNames: ['batmaz13', 'ibinotyourhabibi'], isPrivate: true, isVerified: false, fetchedAt: Date.now() },
+  };
+  const hydrated = mergeRows(users, {}, cache)[0];
+  assert.equal(hydrated.mutuals, 2);
+  assert.equal(hydrated.enriched, true);
+  assert.deepEqual(hydrated.mutualNames, ['batmaz13', 'ibinotyourhabibi']);
+});
+
+test('a hydrated zero stays a real zero', () => {
+  const cache = {
+    90: { followers: 5, following: 5, posts: 0, bio: '', mutualCount: 0, mutualNames: [], fetchedAt: Date.now() },
+  };
+  const row = mergeRows([{ pk: '90', username: 'nomutuals' }], {}, cache)[0];
+  assert.equal(row.mutuals, 0, 'checked and confirmed zero, unlike an un-enriched null');
+});
+
+test('applyFilters: a mutuals threshold hides unknown counts rather than passing them off as zero', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'known', social_context: 'Followed by x + 16 more' },
+      { pk: '2', username: 'unknown' },
+    ],
+    {},
+    {}
+  );
+
+  // The estimate still filters for free — that was the point of reading
+  // social_context at all.
+  assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 10 }).map((r) => r.id), ['1']);
+  assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 1 }).map((r) => r.id), ['1']);
+  // …and with no threshold set, nothing is hidden.
+  assert.equal(applyFilters(rows, DEFAULT_FILTERS).length, 2);
+});
+
+test('countHiddenByUnknownMutuals reports only what the threshold actually hid', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'known', social_context: 'Followed by x + 16 more' },
+      { pk: '2', username: 'unknown' },
+      { pk: '3', username: 'alsounknown' },
+    ],
+    {},
+    {}
+  );
+
+  assert.equal(countHiddenByUnknownMutuals(rows, DEFAULT_FILTERS), 0, 'no threshold, nothing hidden');
+  assert.equal(countHiddenByUnknownMutuals(rows, { ...DEFAULT_FILTERS, minMutuals: 1 }), 2);
+
+  // Rows another filter already removed must not be double-counted here.
+  assert.equal(
+    countHiddenByUnknownMutuals(rows, { ...DEFAULT_FILTERS, minMutuals: 1, search: 'alsounknown' }),
+    1
+  );
+});
+
+test('formatMutuals keeps unknown, estimated and exact visibly apart', () => {
+  assert.equal(formatMutuals({ mutuals: null, enriched: false }), '? mutuals');
+  assert.equal(formatMutuals({ mutuals: undefined, enriched: false }), '? mutuals');
+  assert.equal(formatMutuals({ mutuals: 17, enriched: false }), '~17 mutuals');
+  assert.equal(formatMutuals({ mutuals: 1, enriched: false }), '~1 mutual');
+  assert.equal(formatMutuals({ mutuals: 17, enriched: true }), '17 mutuals');
+  assert.equal(formatMutuals({ mutuals: 1, enriched: true }), '1 mutual');
+  // The only way to earn a bare zero is to have actually looked.
+  assert.equal(formatMutuals({ mutuals: 0, enriched: true }), '0 mutuals');
+});
+
+test('the reported rows no longer claim a count Instagram never gave', () => {
+  const rows = mergeRows(
+    [
+      { pk: '90', username: 'usechede', full_name: 'Daniel Useche', is_private: true },
+      { pk: '91', username: 'grnwave98', full_name: 'Toby Smith', is_private: true, social_context: null },
+    ],
+    {},
+    {}
+  );
+
+  assert.equal(formatMutuals(rows[0]), '? mutuals', 'was "0 mutuals" while the profile showed 2');
+  assert.equal(formatMutuals(rows[1]), '? mutuals', 'was "0 mutuals" while the profile showed 17');
+});
+
+test('sortRows ranks an unknown count below known ones but above a confirmed zero', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'unknown' },
+      { pk: '2', username: 'confirmedzero' },
+      { pk: '3', username: 'three', social_context: 'Followed by a, b, c' },
+    ],
+    {},
+    { 2: { followers: 5, following: 5, posts: 0, bio: '', mutualCount: 0, mutualNames: [], fetchedAt: Date.now() } }
+  );
+
+  assert.deepEqual(sortRows(rows, 'default').map((r) => r.username), ['three', 'unknown', 'confirmedzero']);
 });
 
 test('applyFilters: relationship filters work on un-enriched rows', () => {

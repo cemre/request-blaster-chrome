@@ -12,6 +12,7 @@ import { ListRenderer, renderLog } from './render.js';
 import {
   DEFAULT_FILTERS,
   applyFilters,
+  countHiddenByUnknownMutuals,
   mergeRows,
   sortRows,
   toCachedProfile,
@@ -130,10 +131,19 @@ function recompute() {
       ? `${live.length} shown`
       : `${state.visible.length} of ${live.length} shown`;
 
+  // Anything a filter hides for want of data rather than for failing the test
+  // gets said out loud, so "no results" never quietly means "not loaded yet".
   const unenriched = live.filter((row) => !row.enriched).length;
+  const unknownMutuals = countHiddenByUnknownMutuals(live, state.filters);
   const warning = $('enriched-warning');
+
   if (usesEnrichedFilters(state.filters) && unenriched > 0) {
+    // These filters hide every un-enriched row, which already includes every
+    // row with an unknown mutual count — one message covers both.
     warning.textContent = `${unenriched} request${unenriched === 1 ? '' : 's'} not yet enriched and therefore hidden by these filters.`;
+    warning.hidden = false;
+  } else if (unknownMutuals > 0) {
+    warning.textContent = `${unknownMutuals} request${unknownMutuals === 1 ? '' : 's'} hidden: Instagram did not report a mutual count for them. Load their details to check.`;
     warning.hidden = false;
   } else {
     warning.hidden = true;
