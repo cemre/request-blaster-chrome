@@ -1,0 +1,355 @@
+/* Follows the house convention from the existing extension: color-scheme plus
+   currentColor + opacity, so light and dark both work without a theme table. */
+
+:root {
+  color-scheme: light dark;
+  --accent: #E1306C;
+  --gap: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  font: 13px/1.4 system-ui, -apple-system, sans-serif;
+}
+
+h1 {
+  font-size: 14px;
+  font-weight: 650;
+  margin: 0;
+  flex: 1;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.panel-header {
+  padding: var(--gap);
+  border-bottom: 1px solid currentColor;
+  border-bottom-color: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.count-badge {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  opacity: 0.65;
+}
+
+.hydration {
+  margin-top: 8px;
+}
+
+.hydration-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.hydration-line span { flex: 1; font-variant-numeric: tabular-nums; }
+
+.progress {
+  height: 3px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+/* ---------------------------------------------------------------- banner */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--gap);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.banner span { flex: 1; }
+
+/* --------------------------------------------------------------- filters */
+
+.filters {
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.search {
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: transparent;
+  color: inherit;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-row-end { justify-content: space-between; }
+
+.toggle-chip,
+.select-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-chip:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.select-chip select,
+.select-chip .num {
+  font: inherit;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.select-chip .num { width: 60px; cursor: text; }
+
+.filter-group summary {
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.8;
+  margin-bottom: 6px;
+}
+
+.filter-group summary em { opacity: 0.6; font-style: normal; }
+
+.warning {
+  margin: 6px 0 0;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.result-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.muted { opacity: 0.6; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------- bulk + progress */
+
+.bulk-bar,
+.action-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px var(--gap);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+
+.bulk-count,
+#action-label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.status {
+  padding: 0 var(--gap);
+  font-size: 11px;
+  opacity: 0.6;
+  min-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.status:not(:empty) { padding-top: 6px; }
+
+/* ------------------------------------------------------------------ list */
+
+.list-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sentinel { height: 1px; }
+
+.row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: start;
+  gap: 8px;
+  padding: 9px var(--gap);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.row.is-selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.row.is-busy { opacity: 0.55; }
+.row.is-accepted,
+.row.is-rejected { opacity: 0.4; }
+.row.is-failed { background: color-mix(in srgb, #d32f2f 10%, transparent); }
+
+.row-check { margin-top: 3px; accent-color: var(--accent); }
+
+.avatar-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.row-main { min-width: 0; }
+
+.row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.username { font-weight: 620; }
+
+.chip {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  opacity: 0.85;
+}
+
+.chip-following {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  opacity: 1;
+}
+
+.row-name,
+.row-stats,
+.row-mutuals,
+.row-bio,
+.row-pending-detail {
+  font-size: 11.5px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-stats { font-variant-numeric: tabular-nums; }
+.row-mutuals,
+.row-pending-detail { opacity: 0.5; }
+.row-bio { opacity: 0.6; font-style: italic; }
+
+.row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.row-state {
+  font-size: 10px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+/* --------------------------------------------------------------- buttons */
+
+.btn,
+.icon-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled),
+.icon-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+.btn-small { font-size: 11px; padding: 2px 8px; }
+.btn-quiet { opacity: 0.7; }
+
+.btn-accept {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.btn-reject { opacity: 0.85; }
+
+.icon-btn { font-size: 11px; padding: 3px 8px; }
+
+/* ---------------------------------------------------------------- dialog */
+
+.confirm {
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 10px;
+  padding: 16px;
+  max-width: 280px;
+  color: inherit;
+  background: Canvas;
+}
+
+.confirm h2 { font-size: 14px; margin: 0 0 8px; }
+.confirm p { margin: 0 0 10px; font-size: 12px; opacity: 0.8; }
+.confirm-warn { color: #d32f2f; opacity: 1 !important; font-weight: 600; }
+
+.confirm menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.confirm::backdrop { background: rgba(0, 0, 0, 0.4); }

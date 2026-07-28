@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Request Blaster</title>
+  <link rel="stylesheet" href="sidepanel.css">
+  <script type="module" src="src/panel.js"></script>
+</head>
+<body>
+
+<header class="panel-header">
+  <div class="header-top">
+    <h1>Follow requests</h1>
+    <span id="total-count" class="count-badge">—</span>
+    <button id="refresh" class="icon-btn" title="Refetch the pending list">Refresh</button>
+  </div>
+
+  <div id="hydration" class="hydration">
+    <div class="hydration-line">
+      <span id="hydration-label">0 / 0 enriched</span>
+      <button id="load-batch" class="btn btn-small">Load next 100</button>
+      <button id="stop-hydration" class="btn btn-small btn-quiet" hidden>Stop</button>
+    </div>
+    <div class="progress"><div id="hydration-bar" class="progress-fill"></div></div>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden>
+  <span id="banner-text"></span>
+  <button id="banner-dismiss" class="icon-btn">Dismiss</button>
+</div>
+
+<section class="filters">
+  <input id="search" type="search" class="search" placeholder="Search username or name" autocomplete="off">
+
+  <div class="filter-row">
+    <label class="toggle-chip">
+      <input type="checkbox" id="f-following">
+      <span>I already follow them</span>
+    </label>
+
+    <label class="select-chip">
+      <span>Mutuals</span>
+      <select id="f-mutuals">
+        <option value="0">any</option>
+        <option value="1">1+</option>
+        <option value="5">5+</option>
+        <option value="10">10+</option>
+      </select>
+    </label>
+
+    <!-- Free from the pending list, so this one works on every row. -->
+    <label class="toggle-chip"><input type="checkbox" id="f-default-pic"><span>No profile pic</span></label>
+  </div>
+
+  <details class="filter-group">
+    <summary>Spam signals <em>— enriched rows only</em></summary>
+    <div class="filter-row">
+      <label class="select-chip">
+        <span>Followers under</span>
+        <input id="f-max-followers" type="number" min="0" step="1" placeholder="—" class="num">
+      </label>
+      <label class="toggle-chip"><input type="checkbox" id="f-zero-posts"><span>0 posts</span></label>
+      <label class="toggle-chip"><input type="checkbox" id="f-empty-bio"><span>Empty bio</span></label>
+      <label class="toggle-chip"><input type="checkbox" id="f-bot-ratio"><span>Bot ratio</span></label>
+    </div>
+    <p id="enriched-warning" class="warning" hidden></p>
+  </details>
+
+  <div class="filter-row filter-row-end">
+    <label class="select-chip">
+      <span>Sort</span>
+      <select id="sort">
+        <option value="default">Following, then mutuals</option>
+        <option value="newest">Newest request</option>
+        <option value="followers">Most followers</option>
+      </select>
+    </label>
+    <label class="select-chip">
+      <span>Pace</span>
+      <select id="pacing">
+        <option value="conservative">Conservative</option>
+        <option value="moderate">Moderate</option>
+        <option value="fast">Fast</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="result-line">
+    <label class="toggle-chip">
+      <input type="checkbox" id="select-all">
+      <span>Select all shown</span>
+    </label>
+    <span id="shown-count" class="muted"></span>
+  </div>
+</section>
+
+<div id="bulk-bar" class="bulk-bar" hidden>
+  <span id="bulk-count" class="bulk-count"></span>
+  <button id="bulk-accept" class="btn btn-accept">Accept</button>
+  <button id="bulk-reject" class="btn btn-reject">Reject</button>
+  <button id="bulk-clear" class="btn btn-quiet">Clear</button>
+</div>
+
+<div id="action-progress" class="action-progress" hidden>
+  <span id="action-label"></span>
+  <button id="action-stop" class="btn btn-small btn-quiet">Stop</button>
+</div>
+
+<div id="status" class="status"></div>
+
+<main class="list-scroll">
+  <div id="list" class="list"></div>
+  <div id="sentinel" class="sentinel"></div>
+</main>
+
+<dialog id="confirm" class="confirm">
+  <form method="dialog">
+    <h2 id="confirm-title">Confirm</h2>
+    <p id="confirm-body"></p>
+    <p class="confirm-warn" id="confirm-warn" hidden>Rejections cannot be undone.</p>
+    <menu>
+      <button value="cancel" class="btn btn-quiet">Cancel</button>
+      <button value="go" id="confirm-go" class="btn">Confirm</button>
+    </menu>
+  </form>
+</dialog>
+
+</body>
+</html>

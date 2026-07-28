@@ -1,0 +1,9 @@
+{
+  "name": "request-blaster-chrome-desktop",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only manifest so `node --test` can import src/model.js as ESM. Not used by the extension at runtime.",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  }
+}

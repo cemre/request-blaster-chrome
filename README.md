@@ -1,0 +1,76 @@
+# Request Blaster — Desktop Chrome
+
+Triage Instagram follow requests from a side panel that survives navigation.
+
+Instagram's own pending list dies the moment you click a requester's profile.
+This keeps the list in a side panel, enriches every row with relationship and
+spam signals, and lets you filter and act in bulk.
+
+Standalone — this is **not** a port of the `Safari Extension/` build. No focus
+mode, no on-page banner, no timer.
+
+## Install
+
+1. `chrome://extensions` → enable **Developer mode**
+2. **Load unpacked** → select this folder
+3. Click the toolbar icon. The panel opens Instagram if it isn't already open.
+
+Chrome 114+ (side panel API).
+
+## How it works
+
+- **`content.js`** — stateless proxy. Scrapes the CSRF token from
+  `document.cookie` and the app id from the page's inline scripts, then makes
+  same-origin authenticated calls. Holds no state; every navigation destroys it.
+- **`src/api.js`** — resolves the Instagram tab, pings for content-script
+  readiness, retries once across a navigation.
+- **`sidepanel.html` + `src/panel.js`** — all UI and both throttle queues. The
+  panel is a real document, so nothing depends on the service worker staying
+  alive. `background.js` is a single `setPanelBehavior` call.
+- **`src/model.js`** — pure transforms (merge, filter, sort, parse). No
+  `chrome.*`, no DOM, fully unit-tested.
+
+## Rate limiting
+
+Instagram action-blocks accounts for rapid friendship writes and there is no
+published limit, so both queues are sequential and jittered, show live
+progress, have a Stop button, and **halt entirely** on the first `429` or
+`challenge_required` rather than retrying into a block.
+
+- Profile enrichment: ~1 request per 2s, 100 at a time on demand.
+- Accept/reject: pace selector in the panel (conservative / moderate / fast),
+  defaulting to moderate at ~1 action per 1.5–3s.
+
+Bulk rejection asks for confirmation naming the exact count and active filter.
+Rejections are not undoable.
+
+## The 200 cap
+
+`friendships/pending/` returns at most **200** requests and offers no working
+cursor — `next_max_id` is always `null` and every pagination variant returns the
+same page. If you have more than 200 pending, clear these and hit **Refresh** to
+pull the next batch. The panel says so when it detects a full page.
+
+## Tests
+
+```bash
+npm test
+```
+
+Covers `src/model.js` only — the rest is browser-integration surface. Zero
+dependencies; `package.json` exists purely so Node loads the module as ESM and
+is not used by the extension at runtime.
+
+## Instagram API notes
+
+Everything goes through `www.instagram.com/api/v1`. Verified 2026-07-28:
+
+- `i.instagram.com` answers `friendships/show_many/` and `friendships/show/`
+  with **HTTP 200** and `{"status":"fail"}`. `www` works correctly. The content
+  script therefore treats a `status: "fail"` body as an error regardless of
+  HTTP status.
+- `has_anonymous_profile_picture` ships free on the pending list, so the
+  "no profile pic" filter needs no enrichment.
+- `pk` arrives as a string.
+
+Full design and findings: [`docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md`](../docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md)
