@@ -68,9 +68,16 @@ const state = {
   // shards actually asked for.
   mode: 'requests',
   log: {
+    // Separate from `loadedDays` because an empty log loads zero shards and is
+    // still loaded. Everything that asks "do we already hold the log" means
+    // this; only the paging arithmetic means the count.
+    loaded: false,
     index: [],
     loadedDays: 0,
     records: [],
+    // Keys of the records already in `records`, so a shard re-delivered by a
+    // storage change lands once. See absorbLogRecords.
+    seen: new Set(),
     visible: [],
     followable: [],
     selected: new Set(),
@@ -235,26 +242,93 @@ function setMode(mode) {
   $('log-select-all').checked = false;
   renderer.setSelection(state.selected);
 
-  if (mode === 'log' && state.log.loadedDays === 0) loadLogPage();
+  if (mode === 'log' && !state.log.loaded) loadLogPage();
   else if (mode === 'log') recomputeLog();
   else recompute();
 }
 
+/**
+ * Add records we do not already hold. Every path into `state.log.records` goes
+ * through here, because a live action reaches the panel twice — once from
+ * whoever performed it, once from the storage change it caused.
+ *
+ * @returns how many were actually new
+ */
+function absorbLogRecords(records) {
+  let added = 0;
+  for (const record of records) {
+    const key = history.recordKey(record);
+    if (state.log.seen.has(key)) continue;
+    state.log.seen.add(key);
+    state.log.records.push(record);
+    added += 1;
+  }
+  return added;
+}
+
 /** Pull the next page of day shards. The log is never loaded whole. */
 async function loadLogPage() {
-  if (state.log.loadedDays === 0) {
+  if (!state.log.loaded) {
     // Retention runs here rather than at startup, so opening the panel touches
     // the log not at all. A two-year window has no urgency.
     await store.pruneLog();
     state.log.index = await store.loadLogIndex();
+    state.log.loaded = true;
   }
 
   const next = state.log.index.slice(state.log.loadedDays, state.log.loadedDays + LOG_PAGE_DAYS);
   if (next.length > 0) {
-    state.log.records.push(...(await store.loadLogDays(next)));
+    absorbLogRecords(await store.loadLogDays(next));
     state.log.loadedDays += next.length;
   }
   recomputeLog();
+}
+
+/**
+ * A shard changed under us — an accept or reject from the on-page banner, or
+ * one of our own writes coming back around. Both arrive here, which is what
+ * keeps the log current while a run is in progress.
+ *
+ * Ignored until the log has been loaded once: opening it reads every shard
+ * fresh anyway, and absorbing beforehand would leave `index` and `loadedDays`
+ * describing a load that never happened.
+ */
+function onLogShardChanged(changes) {
+  if (!state.log.loaded) return;
+
+  let touched = false;
+  for (const [key, change] of Object.entries(changes)) {
+    if (!key.startsWith(history.DAY_PREFIX)) continue;
+    // A removal — retention pruning or a cleared log. Nothing to take from it,
+    // and the state reset that follows a clear handles the rest.
+    if (!change.newValue) continue;
+
+    let day = state.log.index.indexOf(key);
+    const isNewDay = day === -1;
+    if (isNewDay) {
+      // A day we have not seen: today's shard on its first write, or the first
+      // write after the date rolls over mid-session. Placed by date rather than
+      // assumed to be the newest, since the index is what the paging slice
+      // reads and a wrong position there quietly skips a day.
+      day = state.log.index.findIndex((known) => known < key);
+      if (day === -1) day = state.log.index.length;
+      state.log.index.splice(day, 0, key);
+      touched = true;
+    }
+
+    // `index[0..loadedDays)` is what we hold. A shard landing inside that range
+    // — or right at its edge — extends it, and the boundary moves out by one.
+    // One older than that stays where the user left it, behind Load older,
+    // rather than jumping the queue.
+    if (day > state.log.loadedDays) continue;
+    if (isNewDay) state.log.loadedDays += 1;
+
+    touched = absorbLogRecords(change.newValue) > 0 || touched;
+  }
+
+  // Repainting the whole list is fine here: the view holds a bounded number of
+  // days, and writes arrive no faster than the queue's pace.
+  if (touched && state.mode === 'log') recomputeLog();
 }
 
 /**
@@ -329,9 +403,10 @@ async function runFollowBack() {
       const result = await api.call('follow', { userId: record.userId });
       if (!result?.ok) return result || { ok: false, error: 'no response' };
 
-      // Push the same record into the in-memory copy so the row stops
-      // offering a follow-back without needing to re-read the shard.
-      state.log.records.push(logAction({ id: record.userId, username: record.username }, history.FOLLOW));
+      // Taken in hand rather than left to the storage change, so the row stops
+      // offering a follow-back even if the write to the log fails. They were
+      // followed either way, and the log failing is not their problem.
+      absorbLogRecords([logAction({ id: record.userId, username: record.username }, history.FOLLOW)]);
       state.log.selected.delete(record.userId);
       return result;
     },
@@ -736,9 +811,12 @@ function bindLog() {
     if (!confirmed) return;
 
     await store.clearLog();
+    // Still loaded, now empty — anything written from here on is live again
+    // rather than waiting for a reload that will not happen.
     state.log.index = [];
     state.log.loadedDays = 0;
     state.log.records = [];
+    state.log.seen.clear();
     state.log.selected.clear();
     $('log-select-all').checked = false;
     recomputeLog();
@@ -894,11 +972,16 @@ function bind() {
 
   $('banner-dismiss').addEventListener('click', hideBanner);
 
-  // The on-page banner writes handled ids to session storage; mirror them so
-  // a profile accepted on the page disappears from the list here too.
+  // Both views write to storage and neither messages the other, so this is
+  // where they meet: handled ids in session, log shards in local.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'session' || !changes[store.HANDLED_KEY]) return;
-    absorbHandledIds(changes[store.HANDLED_KEY].newValue || []);
+    if (area === 'session') {
+      // The on-page banner writes handled ids; mirror them so a profile
+      // accepted on the page disappears from the list here too.
+      if (changes[store.HANDLED_KEY]) absorbHandledIds(changes[store.HANDLED_KEY].newValue || []);
+      return;
+    }
+    if (area === 'local') onLogShardChanged(changes);
   });
 
   // An in-flight action queue is doing irreversible writes; make closing the

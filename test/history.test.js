@@ -13,6 +13,7 @@ import {
   filterRecords,
   followedIds,
   groupByDay,
+  recordKey,
   sortRecords,
 } from '../src/history.js';
 
@@ -45,6 +46,33 @@ test('a record is exactly when, who and what', () => {
 
 test('numeric ids normalise to strings so lookups match', () => {
   assert.equal(rec({ userId: 100011 }).userId, '100011');
+});
+
+test('recordKey matches the same action arriving twice', () => {
+  const written = rec({ at: 1000, userId: '7', action: REJECT });
+  const readBack = JSON.parse(JSON.stringify(written));
+  assert.equal(recordKey(readBack), recordKey(written));
+});
+
+test('recordKey separates records that differ in when, who or what', () => {
+  const base = rec({ at: 1000, userId: '7', action: ACCEPT });
+  for (const other of [
+    rec({ at: 1001, userId: '7', action: ACCEPT }),
+    rec({ at: 1000, userId: '8', action: ACCEPT }),
+    rec({ at: 1000, userId: '7', action: ACCEPT_FOLLOW }),
+  ]) {
+    assert.notEqual(recordKey(other), recordKey(base));
+  }
+});
+
+test('recordKey ignores the username, which is only what they were called then', () => {
+  const before = rec({ at: 1000, userId: '7', username: 'ava', action: ACCEPT });
+  const renamed = rec({ at: 1000, userId: '7', username: 'ava_2', action: ACCEPT });
+  assert.equal(recordKey(renamed), recordKey(before));
+});
+
+test('recordKey does not confuse a numeric id with a string one', () => {
+  assert.equal(recordKey(rec({ userId: 7 })), recordKey(rec({ userId: '7' })));
 });
 
 test('followedIds covers both ways of ending up following someone', () => {

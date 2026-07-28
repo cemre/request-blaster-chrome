@@ -69,6 +69,22 @@ export function buildRecord({ at, userId, username, action }) {
   return { at, userId: String(userId), username, action };
 }
 
+/**
+ * Identity of a record, for recognising one we already hold.
+ *
+ * A live action reaches a reader twice — once from whoever performed it, once
+ * from the storage change it caused — and the two copies are equal but not the
+ * same object, so identity has to come from the contents.
+ *
+ * Username is left out: it is what the account was called at the time, not part
+ * of what happened. The other three are enough, because actions are paced
+ * seconds apart and no account is acted on twice in a run, so colliding on all
+ * three would mean the same record.
+ */
+export function recordKey(record) {
+  return `${record.at}:${record.userId}:${record.action}`;
+}
+
 // ------------------------------------------------------------------- views
 
 export function isAccept(record) {
