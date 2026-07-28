@@ -117,6 +117,12 @@ The insertion point is found via semantic markup — the direct child of
 Instagram's generated class names. If that ever stops matching, the banner
 falls back to a floating bar rather than disappearing.
 
+Width is measured, not assumed. That section is not always as wide as the
+buttons inside it — Instagram's narrow layout insets them — so the banner
+measures the bounding box of the real buttons and sets its own margins to
+match, realigning on resize and on every tick. No breakpoints to keep in sync
+with Instagram's.
+
 ## How it works
 
 - **`content.js`** — stateless proxy. Scrapes the CSRF token from
@@ -180,5 +186,13 @@ Everything goes through `www.instagram.com/api/v1`. Verified 2026-07-28:
 - `web/friendships/{id}/follow/` answers `{ result: "following" | "requested" }`.
   Accepting a request does not make that account public to you, so following a
   private requester back comes back as `requested`.
+- Profile pictures **cannot** be loaded into an `<img>` from the extension
+  origin: `scontent-*.cdninstagram.com` sets Cross-Origin-Resource-Policy and
+  the load dies with `ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`. The same fetch
+  from an instagram.com page succeeds, so `src/avatars.js` routes them through
+  the content script's `avatar` op as data URLs — about 6KB each, ~1.1MB for a
+  full 200-row queue, memory-cached, six concurrent. That op is restricted to
+  `cdninstagram.com` / `fbcdn.net` over HTTPS so it can't be used as a general
+  fetch relay.
 
 Full design and findings: [`docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md`](../docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md)

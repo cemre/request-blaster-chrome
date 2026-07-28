@@ -148,6 +148,50 @@ const OPERATIONS = {
   follow({ userId }) {
     return igFetch(`${API_ROOT}/web/friendships/${userId}/follow/`, { method: 'POST' });
   },
+
+  /**
+   * Proxy a profile picture back as a data URL.
+   *
+   * Instagram's CDN sets Cross-Origin-Resource-Policy, so the side panel
+   * cannot put these URLs in an <img> — the load fails with
+   * ERR_BLOCKED_BY_RESPONSE.NotSameOrigin. From an instagram.com page the same
+   * fetch succeeds, so the panel routes avatars through here. They run about
+   * 6KB each.
+   */
+  async avatar({ url }) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { ok: false, status: 0, error: 'invalid url' };
+    }
+    // Strictly Instagram's own CDNs. Without this the op is a general-purpose
+    // fetch relay running with the page's credentials.
+    if (parsed.protocol !== 'https:' || !/(^|\.)(cdninstagram\.com|fbcdn\.net)$/.test(parsed.hostname)) {
+      return { ok: false, status: 0, error: 'host not allowed' };
+    }
+
+    let response;
+    try {
+      response = await fetch(parsed.href, { credentials: 'omit' });
+    } catch (err) {
+      return { ok: false, status: 0, error: `network: ${err.message}` };
+    }
+    if (!response.ok) return { ok: false, status: response.status, error: `HTTP ${response.status}` };
+
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) return { ok: false, status: 0, error: 'not an image' };
+    if (blob.size > 2 * 1024 * 1024) return { ok: false, status: 0, error: 'image too large' };
+
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+
+    return { ok: true, data: { dataUrl } };
+  },
 };
 
 // banner.js runs in the same isolated world and needs to make the same

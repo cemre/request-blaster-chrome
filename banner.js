@@ -155,6 +155,10 @@
   // without us detecting anything. Fallbacks are the observed light values.
   const STYLES = `
     :host { all: initial; display: block; }
+    /* The UA stylesheet's [hidden] { display: none } loses to any author
+       display rule, and both .wrap and .status set one. Without this the
+       hidden element still lays out — an empty grey bar under the buttons. */
+    [hidden] { display: none !important; }
     .wrap {
       display: flex; gap: 8px; align-items: stretch;
       font-family: system-ui, -apple-system, sans-serif;
@@ -221,6 +225,43 @@
     if (host) host.remove();
   }
 
+  /**
+   * Match the horizontal extent of Instagram's own button row.
+   *
+   * The banner is a sibling of the section holding Follow, but that section is
+   * not always the same width as the buttons inside it — Instagram's narrow
+   * layout insets them. Rather than hardcode a breakpoint, measure the buttons
+   * and set our margins to match, which is right at any viewport.
+   */
+  function alignToButtonRow(anchor) {
+    if (!host || !anchor || host.dataset.mode !== 'inline') return;
+    const parent = host.parentElement;
+    if (!parent) return;
+
+    const rects = [...anchor.querySelectorAll('button, [role="button"]')]
+      .map((button) => button.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (rects.length === 0) return;
+
+    const rowLeft = Math.min(...rects.map((rect) => rect.left));
+    const rowRight = Math.max(...rects.map((rect) => rect.right));
+
+    // Margins resolve against the parent's content box, not its border box.
+    const parentRect = parent.getBoundingClientRect();
+    const parentStyle = getComputedStyle(parent);
+    const contentLeft =
+      parentRect.left + parseFloat(parentStyle.paddingLeft) + parseFloat(parentStyle.borderLeftWidth);
+    const contentRight =
+      parentRect.right - parseFloat(parentStyle.paddingRight) - parseFloat(parentStyle.borderRightWidth);
+
+    const left = `${Math.max(0, Math.round(rowLeft - contentLeft))}px`;
+    const right = `${Math.max(0, Math.round(contentRight - rowRight))}px`;
+
+    // Only write on change; this runs on every tick.
+    if (host.style.marginLeft !== left) host.style.marginLeft = left;
+    if (host.style.marginRight !== right) host.style.marginRight = right;
+  }
+
   /** Insert (or re-insert after a React re-render) at the right place. */
   function place() {
     if (!host) {
@@ -231,11 +272,14 @@
     if (anchor) {
       host.dataset.mode = 'inline';
       if (host.previousElementSibling !== anchor || !host.isConnected) anchor.after(host);
+      alignToButtonRow(anchor);
       return true;
     }
 
     // Header not matched — keep the feature usable rather than vanishing.
     host.dataset.mode = 'float';
+    host.style.marginLeft = '';
+    host.style.marginRight = '';
     if (!host.isConnected) document.documentElement.appendChild(host);
     return true;
   }
@@ -254,9 +298,9 @@
     accept.disabled = false;
     reject.disabled = false;
 
-    const bits = [`Pending request · ${position} of ${total}`];
-    if (user.social_context) bits.push(user.social_context);
-    shadow.querySelector('.meta').textContent = bits.join(' · ');
+    // Not social_context: Instagram already renders its own "Followed by …"
+    // line in the header just above, and the two disagree on names and count.
+    shadow.querySelector('.meta').textContent = `Pending request · ${position} of ${total}`;
 
     const act = (op, doneLabel, busyLabel, logged) => async () => {
       accept.disabled = true;
@@ -322,11 +366,15 @@
       refresh();
       return;
     }
+    if (!target) return;
     // Instagram renders the profile header asynchronously and re-renders it on
     // its own schedule, so keep verifying our node is still where it belongs.
-    if (target && (!host || !host.isConnected || host.dataset.mode === 'float')) {
+    if (!host || !host.isConnected || host.dataset.mode === 'float') {
       place();
+      return;
     }
+    // Placed correctly, but the row may have reflowed under us.
+    alignToButtonRow(findAnchor());
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -352,6 +400,11 @@
     };
   }
   window.addEventListener('popstate', () => queueMicrotask(tick));
+  // Instagram reflows its button row across breakpoints; realign immediately
+  // rather than waiting up to a tick.
+  window.addEventListener('resize', () => {
+    if (target) alignToButtonRow(findAnchor());
+  });
   setInterval(tick, TICK_MS);
 
   refresh();
