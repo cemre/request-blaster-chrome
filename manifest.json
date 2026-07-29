@@ -13,7 +13,7 @@
     "128": "images/icon-128.png"
   },
 
-  "permissions": [ "sidePanel", "storage", "tabs", "scripting" ],
+  "permissions": [ "sidePanel", "storage", "tabs", "scripting", "downloads", "downloads.ui" ],
 
   "host_permissions": [ "*://*.instagram.com/*" ],
 
@@ -22,7 +22,7 @@
   },
 
   "content_scripts": [{
-    "js": [ "content.js", "banner.js" ],
+    "js": [ "content.js", "banner.js", "harvest-content.js" ],
     "matches": [ "*://*.instagram.com/*" ],
     "run_at": "document_idle",
     "all_frames": false

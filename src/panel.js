@@ -7,6 +7,7 @@
 import * as api from './api.js';
 import * as history from './history.js';
 import * as store from './store.js';
+import { mountHarvest } from './harvest/mount.js';
 import { PACING, ThrottledQueue } from './queue.js';
 import { ListRenderer, renderLog } from './render.js';
 import {
@@ -63,12 +64,20 @@ const state = {
   capped: false,
   hydrationQueue: null,
   actionQueue: null,
+  // A run owned by a feature outside this file, handed in as a controller
+  // through mountHarvest's options (see externalRun below). Named for what it
+  // is, not for whichever feature currently happens to be the only one using
+  // it, so this file never has to learn a second name the day another feature
+  // wants the same seam.
+  externalQueue: null,
   // What each queue is doing, as { label, done, total }, for the shared meter in
-  // the toolbar. Null whenever that queue is not running. Both are held because
-  // the two queues are independent and can overlap — you can start a bulk accept
-  // while details are still loading. See activeRun.
+  // the toolbar. Null whenever that queue is not running. All three are held
+  // because they are independent and can overlap — you can start a bulk accept
+  // while details are still loading, or while an external run is reading in the
+  // background. See activeRun.
   hydrationProgress: null,
   actionProgress: null,
+  externalProgress: null,
   loading: false,
 
   // 'requests' | 'log'. The log is loaded lazily and only ever holds the day
@@ -294,8 +303,11 @@ function updateHydrationLabel() {
 
 function updateBulkBar() {
   const count = state.mode === 'log' ? state.log.selected.size : state.selected.size;
-  // Deliberately not `activeRun()`: hydration only reads, so a batch loading
-  // details is no reason to take the bulk buttons away.
+  // Deliberately not `activeRun()`: hydration and an external run both only
+  // read, so neither is a reason to take the bulk buttons away — only the
+  // action queue's writes are. An external run already freezes the checkboxes
+  // (see syncActing) so the selection itself cannot drift, but that is a
+  // different concern from whether the buttons acting on it should show.
   const running = Boolean(state.actionQueue);
 
   $('bulk-bar').hidden = count === 0 || running;
@@ -307,22 +319,30 @@ function updateBulkBar() {
 /**
  * The run the meter reports, and the one its Stop stops.
  *
- * Both queues can be live at once — hydration is a read and does not block
- * acting. When they are, the action wins: it is the one making irreversible
- * writes to Instagram and the one that can be rate limited.
+ * All three queues can be live at once — none of them blocks another from
+ * starting. The action queue wins outright: it is the one making irreversible
+ * writes to Instagram and the one that can get the account rate limited.
+ *
+ * Between the two read-only queues, hydration outranks the external run.
+ * Hydration is native to this list and short — a few minutes at most — while
+ * an external run can take hours; letting a long-running guest hold the
+ * shared meter would bury the panel's own quick status behind someone else's
+ * report for the whole of that run. A feature borrowing this toolbar does not
+ * get to bump the panel's own operations off it.
  */
 function activeRun() {
   if (state.actionQueue) return { queue: state.actionQueue, progress: state.actionProgress };
   if (state.hydrationQueue) return { queue: state.hydrationQueue, progress: state.hydrationProgress };
+  if (state.externalQueue) return { queue: state.externalQueue, progress: state.externalProgress };
   return null;
 }
 
 /**
  * Paint the toolbar's progress meter from state.
  *
- * Rendered rather than pushed, because two independent queues feed it and either
- * can start or finish while the other is running — the meter has to be able to
- * hand over mid-run without either queue knowing about the other.
+ * Rendered rather than pushed, because up to three independent queues feed it
+ * and any of them can start or finish while another is running — the meter has
+ * to be able to hand over mid-run without any queue knowing about the others.
  *
  * `--run-pct` is the whole mechanism: the fill reads it as a width, the knockout
  * copy of the label reads it as a clip. Reset to 0% when nothing is running, or
@@ -355,15 +375,51 @@ function syncRun() {
  * Freeze the list while writes are in flight — dimmed, and inert but for the
  * profile links. Hydration is excluded: it changes nothing on Instagram's side,
  * so there is no reason to stop you filtering and selecting through it.
+ *
+ * An external run freezes too, though it writes nothing either — its reason is
+ * not hydration's. It acts on a specific set of rows the queue captured when it
+ * started, so changing the selection mid-run changes nothing about what is
+ * actually running; that is the action queue's argument (a queue holding ids it
+ * started with), not "we only read". This is the one place the rule for an
+ * external run diverges from the rule for hydration.
  */
 function syncActing() {
-  const acting = Boolean(state.actionQueue);
+  const acting = Boolean(state.actionQueue) || Boolean(state.externalQueue);
   document.body.classList.toggle('is-acting', acting);
   renderer.setInert(acting);
   // Follow-back is a write too, and it acts on the log — so the log freezes on
   // the same terms. Patched in place here; renderLog reapplies it on repaint.
   for (const box of document.querySelectorAll('.log-check')) box.disabled = acting;
 }
+
+/**
+ * The seam an external feature drives its own run through — handed to
+ * mountHarvest as `externalRun`, but named for the role rather than the
+ * feature, since nothing here needs to know which feature is holding it.
+ *
+ * Mirrors what runBulk/runHydrationBatch do to their own state by hand:
+ * `start` seeds the meter before the caller's own first tick the way both
+ * queues seed themselves, `update` is a plain progress tick, and `finish`
+ * clears state in the one statement that also lifts the freeze.
+ */
+const externalRun = {
+  start(queue, progress) {
+    state.externalQueue = queue;
+    state.externalProgress = progress;
+    syncRun();
+    syncActing();
+  },
+  update(progress) {
+    state.externalProgress = progress;
+    syncRun();
+  },
+  finish() {
+    state.externalQueue = null;
+    state.externalProgress = null;
+    syncRun();
+    syncActing();
+  },
+};
 
 /**
  * Which way each select-all button will go, derived from the selection rather
@@ -1254,6 +1310,18 @@ function bind() {
   // panel mid-run a deliberate act rather than an accident.
   window.addEventListener('beforeunload', (event) => {
     if (state.actionQueue) event.preventDefault();
+  });
+
+  // Deleting this call plus src/harvest/ removes the harvest feature entirely.
+  // It reads the log selection through a closure and drives the meter through
+  // externalRun rather than importing panel state, so nothing here depends on
+  // the feature existing — mountHarvest defaults externalRun to a no-op if a
+  // future caller omits it, so this call is not load-bearing either.
+  mountHarvest({
+    selectedLogEntries: () =>
+      state.log.visible.filter((record) => state.log.selected.has(record.userId)),
+    confirmAction,
+    externalRun,
   });
 }
 

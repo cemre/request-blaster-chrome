@@ -112,7 +112,17 @@ async function igFetch(url, init = {}) {
 // throughout also makes every call same-origin from this content script.
 const API_ROOT = 'https://www.instagram.com/api/v1';
 
-const OPERATIONS = {
+// One table per isolated world, not one per execution. This file is injected
+// twice — by the manifest on navigation and by chrome.scripting when the panel
+// meets a tab that predates the extension — and a fresh object each time would
+// orphan whatever a feature content script had registered into the previous
+// one, while the already-bound message listener kept answering from it. Hold
+// it on the shared bridge so every execution and every registration converge
+// on the same table.
+window.__requestBlaster = window.__requestBlaster || {};
+const OPERATIONS = window.__requestBlaster.ops || (window.__requestBlaster.ops = {});
+
+Object.assign(OPERATIONS, {
   pending({ maxId }) {
     const url = maxId
       ? `${API_ROOT}/friendships/pending/?max_id=${encodeURIComponent(maxId)}`
@@ -150,15 +160,16 @@ const OPERATIONS = {
   },
 
   /**
-   * Proxy a profile picture back as a data URL.
+   * Proxy a CDN image back as a data URL. Serves both profile pictures and
+   * post thumbnails — nothing about the fetch is avatar-specific.
    *
    * Instagram's CDN sets Cross-Origin-Resource-Policy, so the side panel
    * cannot put these URLs in an <img> — the load fails with
    * ERR_BLOCKED_BY_RESPONSE.NotSameOrigin. From an instagram.com page the same
-   * fetch succeeds, so the panel routes avatars through here. They run about
+   * fetch succeeds, so the panel routes these through here. Avatars run about
    * 6KB each.
    */
-  async avatar({ url }) {
+  async media({ url }) {
     let parsed;
     try {
       parsed = new URL(url);
@@ -192,17 +203,32 @@ const OPERATIONS = {
 
     return { ok: true, data: { dataUrl } };
   },
-};
+});
+
+// The panel's avatar loader predates this rename. Keeping the old name working
+// means a stale content script during a reload does not break avatars.
+OPERATIONS.avatar = OPERATIONS.media;
 
 // banner.js runs in the same isolated world and needs to make the same
 // authenticated calls, so the operation table is shared here rather than
 // duplicated.
-window.__requestBlaster = window.__requestBlaster || {};
 window.__requestBlaster.call = (op, args = {}) => {
-  const operation = OPERATIONS[op];
+  const operation = (window.__requestBlaster.ops || OPERATIONS)[op];
   if (!operation) return Promise.resolve({ ok: false, error: `unknown op: ${op}` });
   return operation(args).catch((err) => ({ ok: false, status: 0, error: String(err) }));
 };
+
+// Feature-specific content scripts (e.g. harvest-content.js) need the same
+// authenticated fetch rather than a second copy of it, since igFetch carries
+// header scraping and the classify() error contract. Exposed here rather than
+// duplicated so a rate-limit response is recognised identically everywhere.
+window.__requestBlaster.igFetch = igFetch;
+window.__requestBlaster.API_ROOT = API_ROOT;
+window.__requestBlaster.readCookie = readCookie;
+// Optional feature content scripts register their operations here instead of
+// being listed in OPERATIONS, so a feature can be added or removed by editing
+// the manifest alone.
+window.__requestBlaster.register = (ops) => Object.assign(OPERATIONS, ops);
 
 // This file arrives two ways: the manifest's content_scripts declaration on
 // navigation, and chrome.scripting.executeScript when the panel finds a tab
@@ -223,7 +249,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message?.type !== 'RB_IG_API') return false;
 
-  const operation = OPERATIONS[message.op];
+  // Resolve against the live table, never the one this closure captured. The
+  // bind guard above survives re-injection, so a listener bound by an earlier
+  // build keeps answering from whatever table it closed over — one that never
+  // received a feature script's registrations. That is exactly how a real
+  // batch had every built-in op work while userFeed answered "unknown op" for
+  // nine accounts out of ten.
+  const operation = (window.__requestBlaster?.ops || OPERATIONS)[message.op];
   if (!operation) {
     sendResponse({ ok: false, error: `unknown op: ${message.op}` });
     return false;

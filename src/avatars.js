@@ -50,7 +50,7 @@ export function resolveAvatar(url) {
   if (inflight.has(url)) return inflight.get(url);
 
   const promise = schedule(async () => {
-    const result = await api.call('avatar', { url });
+    const result = await api.call('media', { url });
     const dataUrl = result?.ok ? result.data?.dataUrl : null;
     // Cache failures as null too — a CDN URL that 403s will keep doing so, and
     // 200 rows retrying forever would be worse than a missing avatar.
