@@ -13,6 +13,7 @@ import {
   DEFAULT_FILTERS,
   applyFilters,
   countHiddenByUnknownMutuals,
+  filtersActive,
   formatShownCount,
   mergeRows,
   sortRows,
@@ -91,6 +92,10 @@ const state = {
 
 let renderer;
 
+/** How long a finished-run message stays on screen. See setStatus. */
+const STATUS_LINGER = 6000;
+let statusTimer;
+
 // ---------------------------------------------------------------- messaging
 
 /** 'loading' | 'ready' | 'error' — CSS gates the working UI on this. */
@@ -98,8 +103,16 @@ function setState(next) {
   document.body.dataset.state = next;
 }
 
+/**
+ * A run just ended and here is how it went. Clears itself: it reports an event,
+ * not a state, and the moment the list has moved on it is describing something
+ * that is no longer on screen. Left standing it becomes a caption over a list it
+ * no longer matches — and what it says is in the log anyway.
+ */
 function setStatus(text) {
+  clearTimeout(statusTimer);
   $('status').textContent = text || '';
+  if (text) statusTimer = setTimeout(() => { $('status').textContent = ''; }, STATUS_LINGER);
 }
 
 /** Progress line inside the loading block, so it's visible before the UI is. */
@@ -171,9 +184,62 @@ function recompute() {
     warning.hidden = true;
   }
 
+  updateEmptyState(live);
   updateHydrationLabel();
   updateSpamChip();
   updateBulkBar();
+}
+
+/**
+ * What to say when there are no rows to show.
+ *
+ * The distinction that matters is whether anything is left underneath. An empty
+ * queue is the end of the job; an empty *view* over a queue that still holds
+ * requests is a dead end the user walked into with a control, and the notes
+ * under the list are too quiet to be found from a blank screen — hence a box,
+ * with the way out inside it.
+ */
+function updateEmptyState(live) {
+  const box = $('list-empty');
+  if (state.visible.length > 0) {
+    box.hidden = true;
+    return;
+  }
+
+  // Filters can only be blamed for an empty view when there was something for
+  // them to hide. With nothing pending, "reset your filters" is a false lead.
+  const blocked = live.length > 0 && filtersActive(state.filters);
+  const plural = live.length === 1 ? '' : 's';
+
+  box.hidden = false;
+  box.classList.toggle('is-blocked', blocked);
+  $('list-empty-text').textContent = blocked
+    ? `Your filters are hiding all ${live.length} remaining request${plural}.`
+    : 'No pending requests.';
+  $('reset-filters').hidden = !blocked;
+}
+
+/**
+ * Put every filter back to its default, controls included.
+ *
+ * The DOM is the source of truth for filter values — readFilters reads it — so
+ * this resets the inputs and then re-reads, rather than assigning
+ * DEFAULT_FILTERS and leaving the controls contradicting the list.
+ */
+function resetFilters() {
+  $('f-following').checked = false;
+  $('f-mutuals').value = '0';
+  $('f-max-followers').value = '';
+  for (const id of ['f-zero-posts', 'f-empty-bio', 'f-default-pic', 'f-bot-ratio']) {
+    $(id).checked = false;
+  }
+
+  // Emptied before it is closed, so setSearchOpen has nothing left to clear and
+  // fires no second recompute of its own.
+  $('search').value = '';
+  setSearchOpen(false, { field: $('search'), button: $('search-toggle'), onClear: () => {} });
+
+  readFilters();
 }
 
 /** Keeps the count on the closed Spam chip honest. */
@@ -466,7 +532,9 @@ async function runFollowBack() {
       if (halted) showBanner(`Stopped after ${done} of ${total} — Instagram returned "${halted}". Wait before retrying.`);
       else if (stopped) setStatus(`Stopped after ${done} of ${total}.`);
       else if (failures.length) setStatus(`Done, ${failures.length} failed.`);
-      else setStatus(`Followed back ${done}.`);
+      // Nothing on a clean run: the rows below stop offering a follow-back,
+      // which is the same news said where it happened.
+      else setStatus('');
 
       recomputeLog();
     },
@@ -755,7 +823,9 @@ async function runBulk(action) {
       if (halted) showBanner(`Stopped after ${done} of ${total} — Instagram returned "${halted}". Wait before retrying.`);
       else if (stopped) setStatus(`Stopped after ${done} of ${total}.`);
       else if (failures.length) setStatus(`Done, ${failures.length} failed.`);
-      else setStatus(`${spec.done} ${done}.`);
+      // A clean run says nothing: every row it touched marked itself and left
+      // the list, and the log holds the tally for as long as anyone wants it.
+      else setStatus('');
 
       // The pending list on Instagram's side has changed; drop the snapshot so
       // the next Refresh refetches instead of resurrecting handled requests.
@@ -1047,6 +1117,8 @@ function bind() {
 
   $('refresh').addEventListener('click', reload);
   $('banner-retry').addEventListener('click', reload);
+
+  $('reset-filters').addEventListener('click', resetFilters);
 
   $('load-batch').addEventListener('click', () => runHydrationBatch());
   $('stop-hydration').addEventListener('click', () => state.hydrationQueue?.stop());

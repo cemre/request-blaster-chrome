@@ -94,8 +94,9 @@ body:not([data-state='ready']) .hydration { display: none !important; }
 body[data-mode='log'] .filters,
 body[data-mode='log'] .result-bar:not(.result-bar-log),
 body[data-mode='log'] .hydration,
-body[data-mode='log'] .cap-note,
+body[data-mode='log'] .list-note,
 body[data-mode='log'] #list,
+body[data-mode='log'] #list-empty,
 body[data-mode='log'] .bulk-actions[data-for='requests'],
 body[data-mode='requests'] .log-controls,
 body[data-mode='requests'] .result-bar-log,
@@ -384,12 +385,6 @@ h1 {
    block at the foot of this file. */
 .chevron-standin { display: none; }
 
-.warning {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
 .muted { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------- spam signals popover */
@@ -549,15 +544,17 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   font-variant-numeric: tabular-nums;
 }
 
+/* Transient by design — see setStatus. No reserved height: a band held open
+   for a message that is usually absent, and always stale within seconds, is a
+   line of a narrow panel spent on nothing. */
 .status {
   padding: 0 var(--gap);
   font-size: 11px;
   color: var(--text-secondary);
-  min-height: 16px;
   font-variant-numeric: tabular-nums;
 }
 
-.status:not(:empty) { padding-top: 6px; }
+.status:not(:empty) { padding: 6px var(--gap); }
 
 /* ------------------------------------------------------------------ list */
 
@@ -831,7 +828,35 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   color: var(--text-secondary);
 }
 
-.cap-note {
+.empty p { margin: 0; }
+
+/* An empty list with filters on is the one empty state that is not an answer
+   but a dead end, so it is drawn as a box rather than a line of grey text —
+   and it carries the way out, since nothing else on screen says the list is
+   short because of something the user switched on.
+
+   --bg-elevated rather than the chrome tone the bands use: --secondary-bg and
+   --bg-chrome are the same grey in light mode, so a button on a chrome-toned
+   card lost its edges entirely and read as a sentence rather than a control. */
+.empty.is-blocked {
+  margin: 16px var(--gap);
+  padding: 16px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-elevated);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.empty.is-blocked .btn { margin-top: 12px; }
+
+/* The two footnotes under the list: the 200-request cap and whatever the
+   filters are holding back. Both describe a shortfall in what you have just
+   scrolled through, which is why they sit at the end of it rather than in the
+   band above — pinned up there they cost two lines of a narrow panel's height
+   permanently, to say something you only need once you reach the bottom. */
+.list-note {
   margin: 0;
   padding: 12px var(--gap);
   border-top: 1px solid var(--border);

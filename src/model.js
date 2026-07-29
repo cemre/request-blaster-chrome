@@ -166,6 +166,22 @@ export function usesEnrichedFilters(filters) {
   });
 }
 
+/**
+ * Is anything here narrowing the list?
+ *
+ * The question the panel actually asks is "if this list is empty, is that the
+ * filters' doing or is there genuinely nothing left?" — so it counts exactly
+ * what `applyFilters` can reject a row for. Sort order is not a filter, and a
+ * search of nothing but whitespace is not one either, since applyFilters trims
+ * it away before matching.
+ */
+export function filtersActive(filters) {
+  if (filters.onlyFollowing || filters.defaultPic) return true;
+  if (filters.minMutuals > 0) return true;
+  if (filters.search.trim() !== '') return true;
+  return usesEnrichedFilters(filters);
+}
+
 export function applyFilters(rows, filters) {
   const needle = filters.search.trim().toLowerCase();
   const enrichedActive = usesEnrichedFilters(filters);

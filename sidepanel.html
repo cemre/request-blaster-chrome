@@ -97,11 +97,6 @@
   </div>
 
   <input id="search" type="search" class="search" placeholder="Search username or name" autocomplete="off" hidden>
-
-  <!-- Outside the Spam popover on purpose: Mutuals "none" is also an
-       enriched-only filter, and its caveat must not be hidden behind a
-       control the user may never open. -->
-  <p id="enriched-warning" class="warning" hidden></p>
 </section>
 
 <section class="result-bar">
@@ -170,15 +165,32 @@
   </div>
 
   <div id="list" class="list"></div>
+
+  <!-- Two very different things empty this list, and they need opposite
+       treatments: nothing left to triage is good news and gets a quiet line,
+       whereas a list emptied by filters is a dead end — the way out has to be
+       on screen, not something the user has to think their way back to. -->
+  <div id="list-empty" class="empty" hidden>
+    <p id="list-empty-text"></p>
+    <button id="reset-filters" type="button" class="btn" hidden>Reset filters</button>
+  </div>
+
   <div id="log-list" class="list"></div>
   <div id="log-empty" class="empty" hidden></div>
 
-  <!-- A standing fact about the data, so it gets its own element rather than
-       the status line, where every transient message would overwrite it. -->
-  <p id="cap-note" class="cap-note" hidden>
+  <!-- Standing facts about the list, so they get their own elements below it
+       rather than the status line, where every transient message would
+       overwrite them — and below rather than above because both describe a
+       shortfall in what you just scrolled through. -->
+  <p id="cap-note" class="list-note" hidden>
     Instagram only exposes <span id="cap-count"></span> at a time — clear these, then
     <button id="refresh" type="button" class="link-inline">Refresh</button> for the next batch.
   </p>
+
+  <!-- Still outside the Spam popover, which is what matters about its
+       placement: Mutuals "none" is an enriched-only filter too, and its caveat
+       must not sit behind a control the user may never open. -->
+  <p id="enriched-warning" class="list-note" hidden></p>
 
   <div class="log-footer">
     <button id="log-older" class="btn btn-small" hidden>Load older</button>

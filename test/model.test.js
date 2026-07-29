@@ -7,6 +7,7 @@ import {
   applyFilters,
   approximateMutuals,
   countHiddenByUnknownMutuals,
+  filtersActive,
   formatCount,
   formatMutuals,
   formatShownCount,
@@ -305,6 +306,30 @@ test('noMutuals and minMutuals stay independent', () => {
   const rows = mergeRows(pendingFixture, statusFixture, {});
   // Default minMutuals of 0 means "any" and must not imply "exactly zero".
   assert.equal(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 0 }).length, 3);
+});
+
+test('filtersActive answers "is the list short because of me?"', () => {
+  assert.equal(filtersActive(DEFAULT_FILTERS), false);
+
+  // Every key applyFilters can reject a row for, including the ones that only
+  // bite once details are loaded — an empty view is still the filters' doing.
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, onlyFollowing: true }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, minMutuals: 5 }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, noMutuals: true }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, defaultPic: true }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, maxFollowers: 0 }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, zeroPosts: true }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, emptyBio: true }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, botRatio: true }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, search: 'sarah' }), true);
+});
+
+test('filtersActive ignores what does not actually filter', () => {
+  // minMutuals 0 is "any", and applyFilters trims a whitespace search away
+  // before matching — offering to reset either would explain nothing.
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, minMutuals: 0 }), false);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, search: '   ' }), false);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, maxFollowers: null }), false);
 });
 
 test('applyFilters: search covers username and full name, case-insensitively', () => {
