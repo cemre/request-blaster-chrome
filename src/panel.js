@@ -70,14 +70,20 @@ const state = {
   // it, so this file never has to learn a second name the day another feature
   // wants the same seam.
   externalQueue: null,
-  // What each queue is doing, as { label, done, total }, for the shared meter in
-  // the toolbar. Null whenever that queue is not running. All three are held
-  // because they are independent and can overlap — you can start a bulk accept
-  // while details are still loading, or while an external run is reading in the
-  // background. See activeRun.
-  hydrationProgress: null,
-  actionProgress: null,
-  externalProgress: null,
+  // What each queue is doing. Null whenever that queue is not running. All three
+  // are held because they are independent and can overlap — you can start a bulk
+  // accept while details are still loading, or while an external run reads in
+  // the background.
+  //
+  // They do not all report to the same place. Hydration owns the header slot
+  // outright; the action queue and an external run share the toolbar, which is
+  // what activeRun arbitrates. That is also why hydration alone carries no
+  // label: the toolbar's two have several gerunds between them and must say
+  // which is running, while hydration has one, spelled in the markup so CSS can
+  // drop it at narrow widths.
+  hydrationProgress: null,  // { done, total }
+  actionProgress: null,     // { label, done, total }
+  externalProgress: null,   // { label, done, total }
   loading: false,
 
   // 'requests' | 'log'. The log is loaded lazily and only ever holds the day
@@ -204,7 +210,7 @@ function recompute() {
   }
 
   updateEmptyState(live);
-  updateHydrationLabel();
+  syncHydration();
   updateSpamChip();
   updateBulkBar();
 }
@@ -274,19 +280,41 @@ function updateSpamChip() {
 }
 
 /**
- * The hydration row: the standing total, and whether Load is on offer.
+ * The hydration slot in the tab bar: the standing total, or the running batch.
  *
- * One state, always. A run in flight is reported by the toolbar meter, which is
- * pinned — this row lives inside the scroller and is gone after the first
- * screenful of rows, which is no place to report a three-minute batch or to keep
- * the only Stop. What stays here is the number this row is for: how much of the
- * list has details, climbing as they land.
+ * Two states in one box, and that is the whole point of the box. They are one
+ * queue — every profile that lands advances the batch and the total together —
+ * so reported from two places they showed the same number twice, which is what
+ * a run starting from nothing loaded does literally.
+ *
+ * The header rather than the list because a batch takes minutes and the slot
+ * must not scroll away from it, and this is the one pinned band with room to
+ * spare, so being pinned here costs no pixels.
  */
-function updateHydrationLabel() {
+function syncHydration() {
   const live = state.rows.filter((row) => !state.doneIds.has(row.id));
   const enriched = live.filter((row) => row.enriched).length;
+  const progress = state.hydrationProgress;
+  const run = $('hydration-run');
 
-  $('hydration-label').textContent = `${enriched} / ${live.length} details loaded`;
+  $('hydration-idle').hidden = Boolean(progress);
+  run.hidden = !progress;
+
+  // One copy, unlike the toolbar's: this meter is a rule under the label rather
+  // than a fill behind it, so there is no boundary for a second colour to be
+  // knocked out along.
+  if (progress) $('hydration-run-count').textContent = `${progress.done} / ${progress.total}`;
+
+  // Reset when nothing is running rather than left where the last batch ended,
+  // or the next one opens full and counts backwards.
+  const pct = progress && progress.total > 0
+    ? Math.round((progress.done / progress.total) * 100)
+    : 0;
+  run.style.setProperty('--run-pct', `${pct}%`);
+
+  // Kept current even while the run covers it, so switching back to the idle
+  // state never shows a number from before the batch.
+  $('hydration-count').textContent = `${enriched} / ${live.length}`;
 
   // Hydration only ever touches what is in view, so the link has to count the
   // same set — otherwise the enriched-only filters can leave it offering work
@@ -295,11 +323,10 @@ function updateHydrationLabel() {
   const next = Math.min(missingInView, state.settings.batchSize);
   const link = $('load-batch');
 
-  // Gone rather than disabled in both dead cases: a run is already under way and
-  // the meter says so, or there is nothing left to fetch and the counter beside
-  // it says so. A greyed-out "All loaded" is not a control, it is a second
-  // counter.
-  link.hidden = Boolean(state.hydrationQueue) || missingInView === 0;
+  // Gone rather than disabled when there is nothing left to fetch: the counter
+  // beside it already says so, and a greyed-out "All loaded" is not a control,
+  // it is a second counter.
+  link.hidden = missingInView === 0;
   link.textContent = `Load ${next}`;
   link.disabled = state.loading;
 
@@ -324,22 +351,21 @@ function updateBulkBar() {
 }
 
 /**
- * The run the meter reports, and the one its Stop stops.
+ * The run the toolbar reports, and the one its Stop stops.
  *
- * All three queues can be live at once — none of them blocks another from
- * starting. The action queue wins outright: it is the one making irreversible
- * writes to Instagram and the one that can get the account rate limited.
+ * Two candidates, not three. Hydration reports through the header slot and has
+ * its own Stop there, so it never contends for this meter — which also settles
+ * what used to be the awkward half of this decision. The old rule had hydration
+ * outrank an external run so that a guest which can run for hours could not bury
+ * the panel's own quick status behind its report; now it cannot bury it at all,
+ * because the two are never in the same box.
  *
- * Between the two read-only queues, hydration outranks the external run.
- * Hydration is native to this list and short — a few minutes at most — while
- * an external run can take hours; letting a long-running guest hold the
- * shared meter would bury the panel's own quick status behind someone else's
- * report for the whole of that run. A feature borrowing this toolbar does not
- * get to bump the panel's own operations off it.
+ * Between what is left, the action queue wins outright: it is the one making
+ * irreversible writes to Instagram and the one that can get the account rate
+ * limited.
  */
 function activeRun() {
   if (state.actionQueue) return { queue: state.actionQueue, progress: state.actionProgress };
-  if (state.hydrationQueue) return { queue: state.hydrationQueue, progress: state.hydrationProgress };
   if (state.externalQueue) return { queue: state.externalQueue, progress: state.externalProgress };
   return null;
 }
@@ -347,17 +373,16 @@ function activeRun() {
 /**
  * Paint the toolbar's progress meter from state.
  *
- * Rendered rather than pushed, because up to three independent queues feed it
- * and any of them can start or finish while another is running — the meter has
- * to be able to hand over mid-run without any queue knowing about the others.
+ * Rendered rather than pushed, because two independent queues feed it and either
+ * can start or finish while the other is running — the meter has to be able to
+ * hand over mid-run without either knowing about the other.
  *
  * `--run-pct` is the whole mechanism: the fill reads it as a width, the knockout
  * copy of the label reads it as a clip. Reset to 0% when nothing is running, or
  * the next run opens full and counts backwards.
  */
 function syncRun() {
-  const run = activeRun();
-  const progress = run?.progress;
+  const progress = activeRun()?.progress;
   const bar = $('run-progress');
 
   bar.hidden = !progress;
@@ -776,8 +801,8 @@ async function loadPending({ useSnapshot = true } = {}) {
     $('cap-count').textContent = String(api.SERVER_PAGE_CAP);
     $('cap-note').hidden = !state.capped;
     setState('ready');
-    // Before recompute, not just in the finally: updateHydrationLabel reads
-    // this flag, and leaving it set here left "Load details" disabled forever.
+    // Before recompute, not just in the finally: syncHydration reads this flag,
+    // and leaving it set here left "Load details" disabled forever.
     state.loading = false;
     recompute();
   } catch (err) {
@@ -833,12 +858,8 @@ async function runHydrationBatch() {
     // No setStatus here: the meter is already saying this, and the status line
     // is for what happens *after* a run, not during it.
     onProgress: async ({ done, total }) => {
-      state.hydrationProgress = { label: `Enriching ${done} / ${total}…`, done, total };
-      syncRun();
-      // The row's standing total climbs alongside the meter's batch count. Two
-      // numbers, but different questions: how much of the whole list has details
-      // versus how far through this batch we are.
-      updateHydrationLabel();
+      state.hydrationProgress = { done, total };
+      syncHydration();
       // Batch the disk writes; one flush per profile would be pointless churn.
       if (Object.keys(fresh).length - flushed >= 10) {
         flushed = Object.keys(fresh).length;
@@ -849,7 +870,7 @@ async function runHydrationBatch() {
       await store.saveProfiles(fresh);
       state.hydrationQueue = null;
       state.hydrationProgress = null;
-      syncRun();
+      syncHydration();
 
       if (halted) showBanner(`Enrichment stopped — Instagram returned "${halted}". Wait a while before retrying.`);
       else if (stopped) setStatus('Enrichment stopped.');
@@ -864,9 +885,8 @@ async function runHydrationBatch() {
   // Seeded before the first item rather than left to the first onProgress: the
   // queue only reports once an item resolves, and at ~2s per item that would
   // leave the meter closed for the whole of the first request.
-  state.hydrationProgress = { label: `Enriching 0 / ${targets.length}…`, done: 0, total: targets.length };
-  syncRun();
-  updateHydrationLabel();
+  state.hydrationProgress = { done: 0, total: targets.length };
+  syncHydration();
   await queue.run();
 }
 
@@ -1301,8 +1321,13 @@ function bind() {
   $('reset-filters').addEventListener('click', resetFilters);
 
   $('load-batch').addEventListener('click', () => runHydrationBatch());
-  // One Stop for both queues, stopping whichever the meter is reporting — the
-  // same precedence, so the button always means what the label beside it says.
+
+  // A Stop per meter, each stopping the queue its own label is counting — all
+  // three can run at once, so one shared Stop would have to guess. Hydration's
+  // is unambiguous because nothing else reports beside it; the toolbar's follows
+  // the same precedence its label does, so it always means what is written next
+  // to it.
+  $('stop-hydration').addEventListener('click', () => state.hydrationQueue?.stop());
   $('run-stop').addEventListener('click', () => activeRun()?.queue.stop());
 
   bindLog();

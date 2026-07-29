@@ -15,6 +15,44 @@
     <button id="mode-requests" class="mode" data-mode="requests">Requests</button>
     <button id="mode-log" class="mode" data-mode="log" title="Everything you have accepted and rejected">Log</button>
   </nav>
+
+  <!-- In the tab bar's dead space rather than above the list. This band is the
+       only pinned one with room to spare, so reporting from here costs no
+       pixels and never scrolls away mid-batch — which is what let both of
+       hydration's states move into one box. They share it because they are one
+       queue: the batch feeds the total, and split across two places they showed
+       the same number twice.
+
+       Each label is a static word plus a count span rather than one string,
+       because the word is what drops away at narrow widths. -->
+  <div id="hydration" class="hydration">
+    <div id="hydration-idle" class="hydration-line">
+      <span title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front."><span id="hydration-count">0 / 0</span><span class="label-wide"> details</span></span>
+      <!-- A link, not a button: this slot reports on the list and offers one
+           optional action, which does not warrant a control surface in the
+           panel's title band. -->
+      <button id="load-batch" class="link-inline" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
+    </div>
+
+    <!-- --run-pct drives a rule along the bottom edge rather than a fill behind
+         the text. A painted block this size reads as an alert, and a batch
+         loading details in the background is not one; an underline that grows
+         says the same thing at a fraction of the volume.
+
+         It also costs a layer: nothing is painted behind the label, so the line
+         needs no knocked-out second copy the way the toolbar's fill does. The
+         text stays one colour throughout. -->
+    <div id="hydration-run" class="run-progress" hidden>
+      <div class="run-fill"></div>
+
+      <div class="run-line">
+        <span class="spinner spinner-inline"></span>
+        <span class="run-text"><span class="label-wide">Enriching </span><span id="hydration-run-count"></span></span>
+      </div>
+
+      <button id="stop-hydration" class="btn btn-small btn-quiet meter-stop">Stop</button>
+    </div>
+  </div>
 </header>
 
 <div id="banner" class="banner" hidden>
@@ -147,23 +185,6 @@
 <div id="status" class="status"></div>
 
 <main class="list-scroll">
-  <!-- Inside the scroller, not above it: this describes the list rather than
-       controlling the panel, and a narrow panel cannot afford a band that is
-       pinned open once you are past the first screen of rows. -->
-  <div id="hydration" class="hydration">
-    <!-- One state, always: the standing total, which climbs as profiles land.
-         A run in flight is reported by the toolbar meter instead — this row is
-         inside the scroller and scrolls away, and a 100-profile batch takes
-         over three minutes to finish somewhere off screen. -->
-    <div class="hydration-line">
-      <span id="hydration-label" title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front.">0 / 0 details loaded</span>
-      <!-- A link, not a button: this row reports on the list and offers one
-           optional action, which does not warrant the weight of a control
-           surface above every screenful of rows. -->
-      <button id="load-batch" class="link-inline" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
-    </div>
-  </div>
-
   <div id="list" class="list"></div>
 
   <!-- Two very different things empty this list, and they need opposite
@@ -225,7 +246,7 @@
 
     <!-- Carries its own solid background: it is the one thing in this bar that
          must stay a legible control at every fill level, including 100%. -->
-    <button id="run-stop" class="btn btn-small btn-quiet">Stop</button>
+    <button id="run-stop" class="btn btn-small btn-quiet meter-stop">Stop</button>
   </div>
 
   <div id="bulk-bar" class="bulk-bar" hidden>

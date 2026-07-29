@@ -93,7 +93,10 @@ body:not([data-state='ready']) .hydration { display: none !important; }
    mode hides the other's controls rather than duplicating the shell. */
 body[data-mode='log'] .filters,
 body[data-mode='log'] .result-bar:not(.result-bar-log),
-body[data-mode='log'] .hydration,
+/* The standing count only, not the whole slot: a batch in flight is reported
+   from the header, and switching tabs must not take the run and its only Stop
+   off screen with it. */
+body[data-mode='log'] #hydration-idle,
 body[data-mode='log'] .list-note,
 body[data-mode='log'] #list,
 body[data-mode='log'] #list-empty,
@@ -157,7 +160,12 @@ h1 {
 
 /* ---------------------------------------------------------------- header */
 
+/* Two tabs stand about 100px wide and the band is the full panel, so the rest
+   was dead space at every width. The hydration slot is pushed into it. */
 .panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 0 var(--gap);
   background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
@@ -166,6 +174,7 @@ h1 {
 .modes {
   display: flex;
   gap: 16px;
+  flex: none;
 }
 
 .mode {
@@ -193,31 +202,31 @@ h1 {
   border-bottom-color: var(--text);
 }
 
-/* First thing in the scroller, so it heads the list it describes and then
-   scrolls out of the way. It keeps --bg rather than the chrome tone for that
-   reason: it belongs to the list, not to the pinned controls above it.
+/* Sized to its contents and pushed right, rather than given a share of the bar:
+   the tabs must keep their own width at every panel width, and this yields
+   before they do. It carries no background or border of its own — it is a
+   passenger in the header band, not a band.
 
-   One line of text and a link — there is no progress bar. The counter already
-   states the fraction, and a bar restating it earned a permanent band of pixels
-   above every screenful of rows for a number nobody watches continuously. */
+   Stretched to the band's full height so the progress rule lands on the header's
+   bottom edge, level with the active tab's own underline, rather than floating a
+   couple of pixels above it. */
 .hydration {
-  padding: 7px var(--gap);
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  margin-left: auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;
 }
 
 .hydration-line {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
-/* By id, not `span`: the line also holds the spinner, which must keep its own
-   size. min-width so the label yields to the link instead of pushing it off
-   the edge — the count is worth less than the control that changes it. */
-#hydration-label { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+#hydration-count { font-variant-numeric: tabular-nums; }
 
 /* The loading block's spinner, sized down to sit on a 12px line. */
 .spinner-inline {
@@ -542,7 +551,11 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 
 /* One custom property drives the whole thing: the fill reads it as a width, the
    knockout layer reads it as a clip inset. They resolve against the same box, so
-   the white text and the blue behind it cannot drift apart by a pixel. */
+   the white text and the blue behind it cannot drift apart by a pixel.
+
+   Two hosts wear this: the toolbar reporting an action queue, and the header
+   slot reporting a hydration batch. Everything below is host-agnostic; the two
+   differ only in padding, radius and the colour their Stop sits on. */
 .run-progress {
   --run-pct: 0%;
   position: relative;
@@ -551,6 +564,32 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   align-items: center;
   gap: 7px;
   padding: 9px 10px;
+}
+
+/* No padding and no radius: this host paints nothing behind its text, so there
+   is no surface to inset from or to round off. Full --text because the label now
+   sits on the header band itself at every stage of the run, rather than being
+   half-covered by a fill. */
+#hydration-run {
+  gap: 6px;
+  padding: 0;
+  color: var(--text);
+}
+
+/* The meter, in the quietest form that still carries colour and motion: a rule
+   along the bottom edge growing left to right, sharing that edge with the active
+   tab's underline. A --primary block the size of this slot reads as an alert,
+   and a background read is not one. */
+#hydration-run .run-fill {
+  inset: auto auto 0 0;
+  height: 3px;
+}
+
+.run-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-fill {
@@ -573,12 +612,13 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 /* The same line again, in the on-fill colour, clipped to exactly the fill's
-   width. Its padding matches .run-progress so both copies start at the same x
-   and the boundary shows no seam. */
+   width. Both copies must start at the same x or the boundary shows a seam, so
+   the padding is inherited rather than restated — two hosts pad differently and
+   a copied pair of numbers would only be right in one of them. */
 .run-line-knockout {
   position: absolute;
   inset: 0;
-  padding: 9px 10px;
+  padding: inherit;
   color: var(--primary-text);
   clip-path: inset(0 calc(100% - var(--run-pct)) 0 0);
 }
@@ -589,14 +629,18 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 /* Never under the fill: this is the only control in the bar, and at 100% the
-   whole surface behind it is --primary. */
-#run-stop {
+   whole surface behind the toolbar's is --primary — hence the solid background
+   there. The header's needs none: its meter is a 3px rule along the bottom edge,
+   which never passes behind the button. */
+.meter-stop {
   position: relative;
   z-index: 2;
-  background: var(--bg-elevated);
 }
 
-#run-stop:hover:not(:disabled) {
+#run-stop { background: var(--bg-elevated); }
+
+#run-stop:hover:not(:disabled),
+#stop-hydration:hover:not(:disabled) {
   background: var(--secondary-bg);
   color: var(--text);
 }
@@ -1139,10 +1183,17 @@ body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
   .filter-bar { gap: 4px; }
   .icon-toggle { width: 26px; }
 
-  /* The widest thing in the bar is a word naming a control whose value is
-     right beside it. Drop the word and the value carries the chip: "1+", "none".
+  /* The widest thing in a bar is a word naming a control whose value is right
+     beside it. Drop the word and the value carries the chip: "1+", "none".
      display, not visibility — this must also leave the accessibility tree, and
-     the select's aria-label is what names it from here on. */
+     the select's aria-label is what names it from here on.
+
+     The header slot rides on the same rule for the same reason, which is why
+     both its labels are a word plus a count span rather than one string:
+     "32 / 200 details" becomes "32 / 200" beside a link that says "Load 3", and
+     "Enriching 5 / 35" becomes "5 / 35" beside a spinner. That is roughly 55px
+     back on the running state — the difference between a spinner, a counter and
+     a Stop sharing a line with two tabs at 260px and not. */
   .label-wide { display: none; }
 
   /* Except at the default, where the value is "any" and names nothing at all.
