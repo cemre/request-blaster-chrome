@@ -7,7 +7,8 @@
 
 import { suppressDownloadUi } from './batch.js';
 import { collectCandidates, runHarvest } from './harvest.js';
-import { candidatesFromLogEntries } from './model.js';
+import { candidatesFromLogEntries, harvestNotes } from './model.js';
+import { loadHarvested } from './store.js';
 
 const IDLE_STATUS = 'Harvest profiles for follow-back review';
 
@@ -109,8 +110,13 @@ async function planAllFollowers(setStatus) {
  *
  * Costs no API calls at all to plan: a log row already carries the id and
  * username a harvest needs, so this skips the follower sweep entirely.
+ *
+ * Already-harvested rows are left out of select-all but can still be ticked by
+ * hand — that is the only way to redo one — so this is the path a redo arrives
+ * on, and the confirm has to name how many of them there are. A stray tick on a
+ * row already marked is otherwise invisible until the batch has paid for it.
  */
-function planSelection(setStatus, selectedLogEntries) {
+async function planSelection(setStatus, selectedLogEntries) {
   const entries = selectedLogEntries();
   const candidates = candidatesFromLogEntries(entries);
   log(`selection: ${entries.length} ticked row(s) -> ${candidates.length} account(s)`, candidates);
@@ -119,7 +125,14 @@ function planSelection(setStatus, selectedLogEntries) {
     setStatus('Tick rows below to harvest them, or turn on All followers.');
     return null;
   }
-  return { candidates, note: '' };
+
+  const harvested = await loadHarvested();
+  const redos = candidates.filter((candidate) => harvested[candidate.pk]).length;
+  const note = redos
+    ? ` ${redos} of these ${redos === 1 ? 'was' : 'were'} harvested before and will be fetched again.`
+    : '';
+
+  return { candidates, note };
 }
 
 /**
@@ -146,7 +159,37 @@ function clearActiveLogRow() {
   }
 }
 
-function bindControls(selectedLogEntries, confirmAction, externalRun) {
+/** Whether any of these ids currently has a row in the log. */
+function hasLogRow(ids) {
+  return ids.some((id) => id !== null && id !== undefined && id !== ''
+    && document.querySelector(`#log-list .log-row[data-id="${CSS.escape(String(id))}"]`));
+}
+
+/**
+ * Repaint the log's "Harvested" notes after an account lands.
+ *
+ * Read back from storage rather than assembled from what just finished:
+ * harvestOne marks an account only on the paths that actually wrote files, and
+ * a second copy of that decision here is how the two drift apart.
+ *
+ * Skipped unless the account has a log row, because every push repaints the
+ * whole list and a backlog sweep is a thousand-odd followers who were never in
+ * the log — that would be a full repaint every two seconds, for nothing.
+ */
+async function refreshNotes(skipNotes, ids) {
+  if (!hasLogRow(ids)) return;
+  try {
+    skipNotes.set(harvestNotes(await loadHarvested()));
+    // The repaint above rebuilt every row and dropped the mark on the one being
+    // worked. Re-applied here rather than left to the next tick, which is a
+    // pacing delay away.
+    markActiveLogRow(ids[0]);
+  } catch (err) {
+    logError('could not refresh the harvested marks:', err);
+  }
+}
+
+function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes) {
   function setHarvestStatus(message) {
     $('harvest-status').textContent = message;
   }
@@ -160,7 +203,7 @@ function bindControls(selectedLogEntries, confirmAction, externalRun) {
     try {
       const plan = $('harvest-all').checked
         ? await planAllFollowers(setHarvestStatus)
-        : planSelection(setHarvestStatus, selectedLogEntries);
+        : await planSelection(setHarvestStatus, selectedLogEntries);
 
       if (!plan) {
         log('nothing to harvest — stopping before the confirm');
@@ -194,7 +237,7 @@ function bindControls(selectedLogEntries, confirmAction, externalRun) {
       log('starting; writing index.json first to prove the download path works');
       activeHarvest = await runHarvest({
         candidates,
-        onProgress: ({ done, total, item }) => {
+        onProgress: ({ done, total, item, result }) => {
           // The status line keeps naming the account — the meter's label, below,
           // has no room for a username once the counter is in it.
           setHarvestStatus(`${done} / ${total} — @${item.username}`);
@@ -203,6 +246,12 @@ function bindControls(selectedLogEntries, confirmAction, externalRun) {
           // one running thing regardless of which queue is behind it.
           externalRun.update({ label: `Harvesting ${done} / ${total}…`, done, total });
           markActiveLogRow(item.pk);
+
+          // Both ids: web_profile_info can resolve a username to a different
+          // account than the followers list gave, and the log row holds the
+          // one from the request that created it. Not awaited — this is a
+          // repaint, and the queue's pacing is not waiting on it.
+          refreshNotes(skipNotes, [item.pk, result?.pk]);
         },
         onFinish: ({ done, total, halted, stopped, failures, batchId, reviewableCounts }) => {
           $('harvest-start').disabled = false;
@@ -211,6 +260,14 @@ function bindControls(selectedLogEntries, confirmAction, externalRun) {
           // UI: the meter reports an in-flight run, and there no longer is one.
           externalRun.finish();
           clearActiveLogRow();
+
+          // Once at the end regardless of what the per-account refresh above
+          // decided to skip: a backlog sweep marks a thousand accounts that had
+          // no log row at the time, and some of them will have one by the time
+          // the log is next opened.
+          loadHarvested()
+            .then((harvested) => skipNotes.set(harvestNotes(harvested)))
+            .catch((err) => logError('could not refresh the harvested marks:', err));
 
           // A count of failures, always — reporting a bare "Done" while every
           // account silently failed is how a broken run passes for a good one.
@@ -317,6 +374,12 @@ function bindLifecycle() {
  *   folding this run into the panel's shared toolbar meter. Optional and
  *   defaulted to a no-op below, so this feature still mounts — with its own
  *   status line and no shared meter or Stop — if a caller does not supply one.
+ * @param skipNotes `{ set(byId) }`, where `byId` is `{ [userId]: note }`. What
+ *   this feature tells the log about accounts it has already written to a
+ *   batch: the row shows the note and select-all leaves it alone. Optional and
+ *   defaulted like externalRun — without it the marks are simply invisible,
+ *   and the "All followers" sweep still skips them, since that has always been
+ *   decided from storage rather than from the panel.
  */
 export function mountHarvest({
   selectedLogEntries = () => [],
@@ -325,6 +388,7 @@ export function mountHarvest({
     return false;
   },
   externalRun = { start() {}, update() {}, finish() {} },
+  skipNotes = { set() {} },
 } = {}) {
   const anchor = document.querySelector('.log-controls');
   if (!anchor) {
@@ -344,8 +408,15 @@ export function mountHarvest({
   // start a session assuming it was left in a good state.
   suppressDownloadUi(false);
 
+  // Whatever earlier batches wrote, before the log is first opened. Not
+  // awaited: mounting must not wait on storage, and the log is lazily loaded
+  // anyway — this lands long before there is a row to put a note on.
+  loadHarvested()
+    .then((harvested) => skipNotes.set(harvestNotes(harvested)))
+    .catch((err) => logError('could not load the harvested marks:', err));
+
   try {
-    bindControls(selectedLogEntries, confirmAction, externalRun);
+    bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes);
     bindLifecycle();
   } catch (err) {
     // A throw here leaves a button on screen wired to nothing, which is the

@@ -14,6 +14,7 @@ import {
   followedIds,
   groupByDay,
   recordKey,
+  selectAllPlan,
   sortRecords,
 } from '../src/history.js';
 
@@ -137,4 +138,42 @@ test('groupByDay buckets under headings, newest day first', () => {
 
   assert.deepEqual(groups.map((g) => g.label), ['Today', '26 Jul 2026']);
   assert.deepEqual(groups[0].records.map((r) => r.userId), ['2', '3'], 'newest first within a day');
+});
+
+// -------------------------------------------------------------- select all
+
+test('selectAllPlan offers to select while anything selectable is unticked', () => {
+  const plan = selectAllPlan(['1', '2', '3'], new Set(['1']));
+  assert.equal(plan.mode, 'select');
+  assert.equal(plan.disabled, false);
+  assert.deepEqual([...plan.next].sort(), ['1', '2', '3']);
+});
+
+test('selectAllPlan flips to deselect once everything selectable is ticked', () => {
+  const plan = selectAllPlan(['1', '2'], new Set(['1', '2']));
+  assert.equal(plan.mode, 'deselect');
+  assert.equal(plan.disabled, false);
+  assert.deepEqual([...plan.next], []);
+});
+
+test('selectAllPlan keeps ids that are selected but not selectable', () => {
+  // A harvested row ticked by hand for a redo. Select-all adds; it does not
+  // get to drop a choice made deliberately.
+  const plan = selectAllPlan(['1', '2'], new Set(['9']));
+  assert.deepEqual([...plan.next].sort(), ['1', '2', '9']);
+});
+
+test('selectAllPlan can still clear when nothing is selectable', () => {
+  // Every followable row already harvested, one ticked by hand: there is
+  // nothing to add, but the button must still be able to undo that tick.
+  const plan = selectAllPlan([], new Set(['9']));
+  assert.equal(plan.mode, 'deselect');
+  assert.equal(plan.disabled, false);
+  assert.deepEqual([...plan.next], []);
+});
+
+test('selectAllPlan is dead only with nothing to add and nothing to clear', () => {
+  const plan = selectAllPlan([], new Set());
+  assert.equal(plan.disabled, true);
+  assert.deepEqual([...selectAllPlan().next], []);
 });

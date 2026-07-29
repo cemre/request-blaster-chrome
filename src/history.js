@@ -131,6 +131,32 @@ export function sortRecords(records) {
 }
 
 /**
+ * What the log's select-all button should do next, given the ids it is allowed
+ * to tick and the ones already ticked.
+ *
+ * Derived from the selection rather than toggled, like the requests bar's own
+ * button. What is new here is that the two sets can differ: a row can be
+ * selected without being selectable, because rows an outside feature has
+ * already handled are left out of `selectableIds` but can still be ticked by
+ * hand. That is why this is a function with a test rather than an expression
+ * open-coded in the two places that need it.
+ *
+ * `next` therefore adds rather than replaces — "select all" does not say "and
+ * drop the ones you picked yourself". Clearing is what deselect is for, and it
+ * clears everything, hand-picked rows included.
+ */
+export function selectAllPlan(selectableIds = [], selected = new Set()) {
+  const missing = selectableIds.filter((id) => !selected.has(id));
+
+  if (missing.length > 0) {
+    return { mode: 'select', disabled: false, next: new Set([...selected, ...selectableIds]) };
+  }
+  // Nothing left to add. The button offers the only move it has left, and is
+  // dead only when there is no selection to undo either.
+  return { mode: 'deselect', disabled: selected.size === 0, next: new Set() };
+}
+
+/**
  * Locale-independent on purpose: a fixed format keeps the day headers stable
  * and the tests deterministic. Times are formatted at the render layer.
  */

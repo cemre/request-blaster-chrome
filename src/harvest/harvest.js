@@ -11,7 +11,7 @@ import {
   toAccountRecord, unionCandidates,
 } from './model.js';
 import { fetchImageBlob, renderSheets } from './sheet.js';
-import { loadAllLogRecords, loadHarvestedIds, markHarvested } from './store.js';
+import { loadAllLogRecords, loadHarvested, markHarvested } from './store.js';
 
 /**
  * Both candidate sources, unioned and de-duplicated.
@@ -31,8 +31,10 @@ export async function collectCandidates(onProgress = () => {}) {
     onProgress({ phase: 'statuses', message: `Checked ${done} / ${total}…` }));
 
   const { candidates: backlog, unknown } = selectNotFollowedBack(users, statuses);
-  const [records, harvestedIds] = await Promise.all([loadAllLogRecords(), loadHarvestedIds()]);
-  const candidates = unionCandidates(backlog, acceptedNotFollowed(records), harvestedIds);
+  const [records, harvested] = await Promise.all([loadAllLogRecords(), loadHarvested()]);
+  const candidates = unionCandidates(
+    backlog, acceptedNotFollowed(records), new Set(Object.keys(harvested))
+  );
 
   onProgress({ phase: 'ready', message: `${candidates.length} to harvest.` });
   return { candidates, unknown, capped };
@@ -109,7 +111,7 @@ async function harvestOne(candidate, batchId) {
       batchId, name,
       value: toAccountRecord({ candidate, pk, profile, avatarFile, mutualNames, ...profileExtras }),
     });
-    await markHarvested(pk);
+    await markHarvested(pk, { batchId, alias: candidate.pk });
 
     const files = avatarFile ? [name, avatarFile] : [name];
     // Nothing to look at at all: no photo and no words.
@@ -156,7 +158,7 @@ async function harvestOne(candidate, batchId) {
       candidate, pk, profile, media, plan, sheetNames, failedIds, avatarFile, ...profileExtras,
     }),
   });
-  await markHarvested(pk);
+  await markHarvested(pk, { batchId, alias: candidate.pk });
 
   return {
     ok: true, pk, files: [jsonName, ...sheetNames, ...(avatarFile ? [avatarFile] : [])],

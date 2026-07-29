@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import {
   accountFileStem,
   candidatesFromLogEntries,
+  harvestNote,
+  harvestNotes,
+  normalizeHarvested,
   normalizeMediaItem,
   pickThumbnailUrl,
   planSheets,
@@ -408,4 +411,54 @@ test('candidatesFromLogEntries collapses repeat actions on one person', () => {
 test('candidatesFromLogEntries drops rows with nothing to fetch by', () => {
   assert.deepEqual(candidatesFromLogEntries([{ userId: '1' }, { username: 'bob' }, {}]), []);
   assert.deepEqual(candidatesFromLogEntries(), []);
+});
+
+// ----------------------------------------------------------- harvested marks
+
+const NOW = Date.UTC(2026, 6, 28, 12, 0, 0); // 2026-07-28
+const DAY = 86400000;
+
+test('normalizeHarvested migrates the id-only list every earlier batch wrote', () => {
+  const migrated = normalizeHarvested(['1', 2, '3']);
+  assert.deepEqual(Object.keys(migrated).sort(), ['1', '2', '3']);
+  // No date to be had from a bare id, and inventing one would date every old
+  // account to whenever the migration happened to run.
+  assert.deepEqual(migrated['1'], { at: null, batchId: null });
+});
+
+test('normalizeHarvested keeps what a current record says', () => {
+  const clean = normalizeHarvested({ 7: { at: NOW, batchId: '2026-07-28-2252' } });
+  assert.deepEqual(clean['7'], { at: NOW, batchId: '2026-07-28-2252' });
+});
+
+test('normalizeHarvested survives a record written by something else', () => {
+  const clean = normalizeHarvested({
+    1: { at: 'yesterday', batchId: 12 },
+    2: null,
+    '': { at: NOW },
+  });
+  assert.deepEqual(clean['1'], { at: null, batchId: null });
+  assert.deepEqual(clean['2'], { at: null, batchId: null });
+  assert.equal('' in clean, false);
+  assert.deepEqual(normalizeHarvested(null), {});
+  assert.deepEqual(normalizeHarvested('nonsense'), {});
+  assert.deepEqual(normalizeHarvested(), {});
+});
+
+test('harvestNote dates the mark the way the log dates its own days', () => {
+  assert.equal(harvestNote({ at: NOW }, NOW), 'Harvested today');
+  assert.equal(harvestNote({ at: NOW - DAY }, NOW), 'Harvested yesterday');
+  assert.equal(harvestNote({ at: Date.UTC(2026, 6, 4) }, NOW), 'Harvested 4 Jul 2026');
+});
+
+test('harvestNote still marks a record that has no date', () => {
+  // Everything migrated from the old id-only list lands here.
+  assert.equal(harvestNote({ at: null }, NOW), 'Harvested');
+  assert.equal(harvestNote(null, NOW), null);
+});
+
+test('harvestNotes turns the stored record set into one note per account', () => {
+  const notes = harvestNotes({ 1: { at: NOW }, 2: { at: null } }, NOW);
+  assert.deepEqual(notes, { 1: 'Harvested today', 2: 'Harvested' });
+  assert.deepEqual(harvestNotes(), {});
 });

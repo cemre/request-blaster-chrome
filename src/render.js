@@ -238,8 +238,17 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute:
  * `inert` freezes the selection while a follow-back run is in flight. It has to
  * be passed in rather than left to CSS because a storage change can repaint this
  * list mid-run, and the rebuilt checkboxes would come back enabled.
+ *
+ * `skipNotes` is `{ [userId]: note }` for rows an outside feature has already
+ * handled — the note is rendered under the username and the row is left out of
+ * select-all. A plain string rather than anything structured, because this file
+ * has no business knowing what the other feature did; it renders the sentence
+ * it is handed. The checkbox stays live: the note says a row is not worth
+ * ticking by default, not that it cannot be ticked.
  */
-export function renderLog(container, records, { now, selected, canFollow, inert = false }) {
+export function renderLog(container, records, {
+  now, selected, canFollow, inert = false, skipNotes = {},
+}) {
   container.textContent = '';
   const fragment = document.createDocumentFragment();
 
@@ -274,6 +283,13 @@ export function renderLog(container, records, { now, selected, canFollow, inert 
       const action = el('span', `log-action log-action-${record.action}`,
         ACTION_LABELS[record.action] || record.action);
       row.appendChild(action);
+
+      // Its own line under the username rather than a fifth column. The panel
+      // is dragged to ~260px beside Instagram, where a row already spends its
+      // width on the time, the username and the action chip — a note inline
+      // would leave the username four characters wide.
+      const note = skipNotes[record.userId];
+      if (note) row.appendChild(el('span', 'log-note', note));
 
       fragment.appendChild(row);
     }

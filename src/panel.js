@@ -96,6 +96,13 @@ const state = {
     seen: new Set(),
     visible: [],
     followable: [],
+    // Followable ids minus the noted ones — what select-all acts on. Derived in
+    // recomputeLog rather than at each use, because two places need it and they
+    // used to disagree about what "all" meant.
+    selectable: [],
+    // `{ [userId]: note }` from an outside feature, via the skipNotes seam
+    // below. A noted row shows the note and is left out of `selectable`.
+    skipNotes: {},
     selected: new Set(),
     kind: 'all',
     search: '',
@@ -372,9 +379,10 @@ function syncRun() {
 }
 
 /**
- * Freeze the list while writes are in flight — dimmed, and inert but for the
- * profile links. Hydration is excluded: it changes nothing on Instagram's side,
- * so there is no reason to stop you filtering and selecting through it.
+ * Whether a run in flight should freeze the lists.
+ *
+ * Hydration is excluded: it changes nothing on Instagram's side, so there is no
+ * reason to stop you filtering and selecting through it.
  *
  * An external run freezes too, though it writes nothing either — its reason is
  * not hydration's. It acts on a specific set of rows the queue captured when it
@@ -382,9 +390,18 @@ function syncRun() {
  * actually running; that is the action queue's argument (a queue holding ids it
  * started with), not "we only read". This is the one place the rule for an
  * external run diverges from the rule for hydration.
+ *
+ * One function because two readings of it drifted apart once already: this said
+ * "or external", renderLog's `inert` said "action queue only", and a repaint
+ * mid-harvest handed the log's checkboxes back.
  */
+function isActing() {
+  return Boolean(state.actionQueue) || Boolean(state.externalQueue);
+}
+
+/** Apply that freeze — dimmed, and inert but for the profile links. */
 function syncActing() {
-  const acting = Boolean(state.actionQueue) || Boolean(state.externalQueue);
+  const acting = isActing();
   document.body.classList.toggle('is-acting', acting);
   renderer.setInert(acting);
   // Follow-back is a write too, and it acts on the log — so the log freezes on
@@ -422,6 +439,21 @@ const externalRun = {
 };
 
 /**
+ * Rows another feature has already handled, as `{ [userId]: note }`.
+ *
+ * The counterpart to externalRun, and named for the role rather than the
+ * feature for the same reason: the panel shows the note and stops select-all
+ * ticking those rows, and never learns what the note means. Handed to
+ * mountHarvest, which pushes the accounts it has already written to a batch.
+ */
+const skipNotes = {
+  set(byId) {
+    state.log.skipNotes = byId || {};
+    if (state.mode === 'log') recomputeLog();
+  },
+};
+
+/**
  * Which way each select-all button will go, derived from the selection rather
  * than toggled on click. Ticking the last row by hand has to flip the label
  * too, or the button starts describing an action it will not perform.
@@ -435,13 +467,9 @@ function syncSelectAll() {
   $('select-all').textContent = shownAll ? 'Deselect all' : 'Select all';
   $('select-all').disabled = state.visible.length === 0;
 
-  // By account, not by row: the same person can hold two followable rows, and
-  // the selection is keyed on who they are.
-  const followable = [...new Set(state.log.followable.map((record) => record.userId))];
-  const logAll = followable.length > 0
-    && followable.every((id) => state.log.selected.has(id));
-  $('log-select-all').textContent = logAll ? 'Deselect all' : 'Select all';
-  $('log-select-all').disabled = followable.length === 0;
+  const plan = history.selectAllPlan(state.log.selectable, state.log.selected);
+  $('log-select-all').textContent = plan.mode === 'deselect' ? 'Deselect all' : 'Select all';
+  $('log-select-all').disabled = plan.disabled;
 }
 
 /** The floating bar exists only while it has something to show. */
@@ -578,9 +606,14 @@ function recomputeLog() {
     now: Date.now(),
     selected: state.log.selected,
     canFollow,
-    // A follow-back run repaints this list as its own writes land in the log, so
-    // the freeze has to be reapplied on every render, not just when it starts.
-    inert: Boolean(state.actionQueue),
+    // A run repaints this list from under itself — a follow-back's own writes
+    // land in the log, and a harvest pushes a note per account — so the freeze
+    // has to be reapplied on every render, not just when it starts. Through
+    // isActing() rather than a second reading of the same rule: syncActing
+    // disables these checkboxes for an external run too, and this used to read
+    // only the action queue, so a repaint mid-harvest handed them back.
+    inert: isActing(),
+    skipNotes: state.log.skipNotes,
   });
 
   for (const tab of document.querySelectorAll('.log-tab')) {
@@ -605,6 +638,14 @@ function recomputeLog() {
   // Only rows offering a follow-back can be selected, so "select all" has to
   // count the same set rather than everything on screen.
   state.log.followable = state.log.visible.filter(canFollow);
+
+  // By account, not by row: the same person can hold two followable rows, and
+  // the selection is keyed on who they are. Noted rows come out — select-all
+  // is the bulk gesture, and a row already handled elsewhere is exactly what
+  // you do not mean by "all". Ticking one by hand still works.
+  state.log.selectable = [...new Set(state.log.followable.map((record) => record.userId))]
+    .filter((id) => !state.log.skipNotes[id]);
+
   updateBulkBar();
 }
 
@@ -1076,12 +1117,13 @@ function bindLog() {
   });
 
   $('log-select-all').addEventListener('click', () => {
-    const followable = [...new Set(state.log.followable.map((record) => record.userId))];
-    const allSelected = followable.length > 0
-      && followable.every((id) => state.log.selected.has(id));
+    const { next } = history.selectAllPlan(state.log.selectable, state.log.selected);
 
+    // Mutated in place rather than reassigned: renderLog was handed this Set
+    // and the harvest reads it through a closure, so swapping the object would
+    // leave both holding the previous selection.
     state.log.selected.clear();
-    if (!allSelected) for (const id of followable) state.log.selected.add(id);
+    for (const id of next) state.log.selected.add(id);
     recomputeLog();
   });
 
@@ -1322,6 +1364,7 @@ function bind() {
       state.log.visible.filter((record) => state.log.selected.has(record.userId)),
     confirmAction,
     externalRun,
+    skipNotes,
   });
 }
 

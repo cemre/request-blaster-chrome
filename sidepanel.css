@@ -867,7 +867,10 @@ body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   align-items: center;
-  gap: 8px;
+  /* Split, because only noted rows have a second row and 8px between a
+     username and its own footnote reads as two separate things. */
+  column-gap: 8px;
+  row-gap: 2px;
   padding: 6px var(--gap);
   border-bottom: 1px solid var(--border);
 }
@@ -884,6 +887,18 @@ body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
 
 /* Rows with nothing to follow back keep the columns aligned. */
 .log-check-spacer { width: 16px; }
+
+/* A second line under the username, not a fifth column: at 260px the row has
+   no width left to give one. Column 3 is the username's, so the note hangs
+   below it and runs to the row's end; auto-placement finds row 2 on its own. */
+.log-note {
+  grid-column: 3 / -1;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .log-time {
   font-size: 11px;

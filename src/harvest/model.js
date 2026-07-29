@@ -5,6 +5,8 @@
 // src/harvest/ and can be added or removed without touching shared code —
 // see banner.js for the same pattern.
 
+import { dayKey, dayKeyDate, dayLabel } from '../history.js';
+
 /**
  * Split a followers list into those the viewer does not follow back and those
  * whose follow status is unknown.
@@ -99,6 +101,68 @@ export function candidatesFromLogEntries(entries = []) {
   }
 
   return [...byPk.values()];
+}
+
+// ----------------------------------------------------------- harvested marks
+
+/**
+ * The set of accounts already written to a batch, whatever shape it is on disk.
+ *
+ * It began as a bare array of ids, which was enough while nothing but
+ * `unionCandidates` read it. Now the log shows the mark, and a mark with no
+ * date cannot answer the only question worth asking of it — is this old enough
+ * to be worth redoing. So the stored shape is a record per account, and a
+ * legacy array migrates to dated-nothing rather than being thrown away: those
+ * accounts really were harvested, we just no longer know when. Inventing a date
+ * here would stamp every one of them with whenever the migration ran.
+ */
+export function normalizeHarvested(stored) {
+  const clean = {};
+
+  if (Array.isArray(stored)) {
+    for (const pk of stored) {
+      const id = String(pk ?? '');
+      if (id) clean[id] = { at: null, batchId: null };
+    }
+    return clean;
+  }
+  if (!stored || typeof stored !== 'object') return clean;
+
+  for (const [pk, entry] of Object.entries(stored)) {
+    if (!pk) continue;
+    clean[pk] = {
+      at: Number.isFinite(entry?.at) ? entry.at : null,
+      batchId: typeof entry?.batchId === 'string' ? entry.batchId : null,
+    };
+  }
+  return clean;
+}
+
+/**
+ * How one harvested account reads on its log row.
+ *
+ * Dated through the log's own dayLabel rather than a second format invented for
+ * one chip, so a row reading "Harvested yesterday" sits under a "Yesterday"
+ * heading that agrees with it. Lower-cased, because it is a phrase here and a
+ * heading there.
+ */
+export function harvestNote(entry, now = Date.now()) {
+  if (!entry) return null;
+  if (!Number.isFinite(entry.at)) return 'Harvested';
+
+  const day = dayLabel(dayKeyDate(dayKey(entry.at)), now);
+  const relative = day === 'Today' || day === 'Yesterday';
+  return `Harvested ${relative ? day.toLowerCase() : day}`;
+}
+
+/** Every harvested account as `{ [pk]: note }`, ready for the panel's rows. */
+export function harvestNotes(harvested = {}, now = Date.now()) {
+  const notes = {};
+  for (const [pk, entry] of Object.entries(harvested || {})) {
+    const note = harvestNote(entry, now);
+    if (note) notes[pk] = note;
+  }
+  return notes;
 }
 
 // How many recent posts a review looks at. Defined here rather than with the
