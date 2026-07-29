@@ -34,22 +34,20 @@
       <button id="load-batch" class="link-inline" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
     </div>
 
-    <!-- The toolbar's meter in a second host: --run-pct drives both the fill's
-         width and the knockout layer's clip, so the coloured text can never
-         disagree with the colour behind it. Scoped to this box rather than the
-         whole band because a --primary fill sweeping the header would swallow
-         the --primary underline marking which tab you are on. -->
+    <!-- --run-pct drives a rule along the bottom edge rather than a fill behind
+         the text. A painted block this size reads as an alert, and a batch
+         loading details in the background is not one; an underline that grows
+         says the same thing at a fraction of the volume.
+
+         It also costs a layer: nothing is painted behind the label, so the line
+         needs no knocked-out second copy the way the toolbar's fill does. The
+         text stays one colour throughout. -->
     <div id="hydration-run" class="run-progress" hidden>
       <div class="run-fill"></div>
 
       <div class="run-line">
         <span class="spinner spinner-inline"></span>
         <span class="run-text"><span class="label-wide">Enriching </span><span id="hydration-run-count"></span></span>
-      </div>
-
-      <div class="run-line run-line-knockout" aria-hidden="true">
-        <span class="spinner spinner-inline"></span>
-        <span class="run-text"><span class="label-wide">Enriching </span><span id="hydration-run-count-knockout"></span></span>
       </div>
 
       <button id="stop-hydration" class="btn btn-small btn-quiet meter-stop">Stop</button>

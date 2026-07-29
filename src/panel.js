@@ -293,13 +293,10 @@ function syncHydration() {
   $('hydration-idle').hidden = Boolean(progress);
   run.hidden = !progress;
 
-  if (progress) {
-    // Both copies in one statement: they are the same line in two colours, and a
-    // frame where they disagree shows as a seam at the fill's edge.
-    const counted = `${progress.done} / ${progress.total}`;
-    $('hydration-run-count').textContent = counted;
-    $('hydration-run-count-knockout').textContent = counted;
-  }
+  // One copy, unlike the toolbar's: this meter is a rule under the label rather
+  // than a fill behind it, so there is no boundary for a second colour to be
+  // knocked out along.
+  if (progress) $('hydration-run-count').textContent = `${progress.done} / ${progress.total}`;
 
   // Reset when nothing is running rather than left where the last batch ended,
   // or the next one opens full and counts backwards.

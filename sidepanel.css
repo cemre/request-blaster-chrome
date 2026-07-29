@@ -205,12 +205,19 @@ h1 {
 /* Sized to its contents and pushed right, rather than given a share of the bar:
    the tabs must keep their own width at every panel width, and this yields
    before they do. It carries no background or border of its own — it is a
-   passenger in the header band, not a band. */
+   passenger in the header band, not a band.
+
+   Stretched to the band's full height so the progress rule lands on the header's
+   bottom edge, level with the active tab's own underline, rather than floating a
+   couple of pixels above it. */
 .hydration {
   margin-left: auto;
   min-width: 0;
   font-size: 12px;
   color: var(--text-secondary);
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;
 }
 
 .hydration-line {
@@ -559,18 +566,23 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   padding: 9px 10px;
 }
 
-/* Tighter than the toolbar's, and rounded, because it has to fit inside a band
-   the tabs already size — this is a chip in the header, not a bar across it.
-
-   Full --text rather than the slot's secondary tone: this is the half of the
-   line the fill has not reached yet, and it has to hold its own against the
-   knocked-out half beside it. The knockout sets its colour on itself, so it
-   still wins over this. */
+/* No padding and no radius: this host paints nothing behind its text, so there
+   is no surface to inset from or to round off. Full --text because the label now
+   sits on the header band itself at every stage of the run, rather than being
+   half-covered by a fill. */
 #hydration-run {
   gap: 6px;
-  padding: 4px 6px;
-  border-radius: var(--r-md);
+  padding: 0;
   color: var(--text);
+}
+
+/* The meter, in the quietest form that still carries colour and motion: a rule
+   along the bottom edge growing left to right, sharing that edge with the active
+   tab's underline. A --primary block the size of this slot reads as an alert,
+   and a background read is not one. */
+#hydration-run .run-fill {
+  inset: auto auto 0 0;
+  height: 3px;
 }
 
 .run-text {
@@ -617,16 +629,15 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 /* Never under the fill: this is the only control in the bar, and at 100% the
-   whole surface behind it is --primary. Hence a solid background of its own —
-   which is the one thing that differs between hosts, since they sit on
-   different tones. */
+   whole surface behind the toolbar's is --primary — hence the solid background
+   there. The header's needs none: its meter is a 3px rule along the bottom edge,
+   which never passes behind the button. */
 .meter-stop {
   position: relative;
   z-index: 2;
 }
 
 #run-stop { background: var(--bg-elevated); }
-#stop-hydration { background: var(--bg-chrome); }
 
 #run-stop:hover:not(:disabled),
 #stop-hydration:hover:not(:disabled) {
