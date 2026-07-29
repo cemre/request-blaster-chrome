@@ -437,6 +437,15 @@ async function runFollowBack() {
 
 // --------------------------------------------------------------- bulk pass
 
+/** Follow status for a set of pending users, 100 ids per request. */
+function checkFollowStatuses(users) {
+  setLoadingText(`Checking follow status for ${users.length}…`);
+  return api.fetchFollowStatuses(
+    users.map((user) => String(user.pk)),
+    ({ done, total }) => setLoadingText(`Checking follow status ${done} / ${total}…`)
+  );
+}
+
 async function loadPending({ useSnapshot = true } = {}) {
   if (state.loading) return;
   state.loading = true;
@@ -452,13 +461,27 @@ async function loadPending({ useSnapshot = true } = {}) {
       const { users, capped } = await api.fetchAllPending(({ total }) =>
         setLoadingText(`Fetched ${total} requests…`)
       );
-      setLoadingText(`Checking follow status for ${users.length}…`);
-      const statuses = await api.fetchFollowStatuses(
-        users.map((user) => String(user.pk)),
-        ({ done, total }) => setLoadingText(`Checking follow status ${done} / ${total}…`)
-      );
-      snapshot = { users, statuses, capped };
+      snapshot = { users, capped, statuses: await checkFollowStatuses(users) };
       await store.saveSnapshot(snapshot);
+    } else {
+      // The pending list keeps for a browser session. The follow flags do not,
+      // and they are not the panel's to know: you follow people on
+      // instagram.com itself, and nothing tells the panel you did. A cached
+      // `statuses` is therefore only as true as the moment it was taken, and
+      // "Already follow" is the one filter that answers *wrong* rather than
+      // incomplete when it drifts — a stale `false` is indistinguishable from a
+      // real one, so the row simply is not there and nothing says why.
+      // Re-asking costs two reads against a list we already hold.
+      try {
+        snapshot = { ...snapshot, statuses: await checkFollowStatuses(snapshot.users) };
+        await store.saveSnapshot(snapshot);
+      } catch (err) {
+        // Better to open with flags we know may be stale than not to open —
+        // but not quietly, since that is exactly the failure above.
+        showBanner(
+          `Could not re-check follow status (${describeError(err)}). "Already follow" may be out of date until you Refresh.`
+        );
+      }
     }
 
     state.pendingUsers = snapshot.users;
