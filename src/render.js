@@ -35,6 +35,7 @@ export class ListRenderer {
     this.selected = new Set();
     this.rendered = 0;
     this.nodesById = new Map();
+    this.inert = false;
 
     this.observer = new IntersectionObserver(
       (entries) => {
@@ -73,6 +74,24 @@ export class ListRenderer {
     const row = checkbox.closest('.row');
     row.classList.toggle('is-selected', checkbox.checked);
     this.handlers.onToggleSelect(row.dataset.id, checkbox.checked);
+  }
+
+  /**
+   * Freeze selection while a write queue runs.
+   *
+   * CSS dims the rows and takes their pointer events, but that stops the mouse
+   * only — Tab still reaches a checkbox and Space still ticks it. The disabled
+   * attribute is the part that actually holds, so it is set here rather than
+   * left to the stylesheet, and `inert` is remembered for rows the scroller
+   * mounts partway through a run.
+   */
+  setInert(inert) {
+    if (this.inert === inert) return;
+    this.inert = inert;
+    for (const node of this.nodesById.values()) {
+      const checkbox = node.querySelector('.row-check');
+      if (checkbox) checkbox.disabled = inert;
+    }
   }
 
   setSelection(selected) {
@@ -147,6 +166,7 @@ export class ListRenderer {
     checkbox.type = 'checkbox';
     checkbox.className = 'row-check';
     checkbox.checked = this.selected.has(row.id);
+    checkbox.disabled = this.inert;
     checkbox.setAttribute('aria-label', `Select ${row.username}`);
     node.appendChild(checkbox);
 
@@ -214,8 +234,12 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute:
  * `canFollow(record)` decides which rows get a checkbox — the accepted ones you
  * do not already follow, since following back is the only thing you can do
  * from here.
+ *
+ * `inert` freezes the selection while a follow-back run is in flight. It has to
+ * be passed in rather than left to CSS because a storage change can repaint this
+ * list mid-run, and the rebuilt checkboxes would come back enabled.
  */
-export function renderLog(container, records, { now, selected, canFollow }) {
+export function renderLog(container, records, { now, selected, canFollow, inert = false }) {
   container.textContent = '';
   const fragment = document.createDocumentFragment();
 
@@ -233,6 +257,7 @@ export function renderLog(container, records, { now, selected, canFollow }) {
         checkbox.type = 'checkbox';
         checkbox.className = 'row-check log-check';
         checkbox.checked = selected.has(record.userId);
+        checkbox.disabled = inert;
         checkbox.setAttribute('aria-label', `Select ${record.username}`);
         row.appendChild(checkbox);
         if (selected.has(record.userId)) row.classList.add('is-selected');

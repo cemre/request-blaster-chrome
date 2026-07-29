@@ -62,10 +62,13 @@ const state = {
   filters: { ...DEFAULT_FILTERS },
   capped: false,
   hydrationQueue: null,
-  // Batch progress while a hydration run is in flight, so the row can report
-  // the run instead of the standing total. Null whenever nothing is running.
-  hydrationProgress: null,
   actionQueue: null,
+  // What each queue is doing, as { label, done, total }, for the shared meter in
+  // the toolbar. Null whenever that queue is not running. Both are held because
+  // the two queues are independent and can overlap — you can start a bulk accept
+  // while details are still loading. See activeRun.
+  hydrationProgress: null,
+  actionProgress: null,
   loading: false,
 
   // 'requests' | 'log'. The log is loaded lazily and only ever holds the day
@@ -255,26 +258,19 @@ function updateSpamChip() {
 }
 
 /**
- * The whole hydration row: counter, spinner, and which of Load / Stop is on
- * offer. One function owns all three so they cannot disagree about whether a
- * batch is running.
+ * The hydration row: the standing total, and whether Load is on offer.
+ *
+ * One state, always. A run in flight is reported by the toolbar meter, which is
+ * pinned — this row lives inside the scroller and is gone after the first
+ * screenful of rows, which is no place to report a three-minute batch or to keep
+ * the only Stop. What stays here is the number this row is for: how much of the
+ * list has details, climbing as they land.
  */
 function updateHydrationLabel() {
   const live = state.rows.filter((row) => !state.doneIds.has(row.id));
   const enriched = live.filter((row) => row.enriched).length;
 
-  const running = Boolean(state.hydrationQueue);
-  const progress = state.hydrationProgress;
-
-  // One counter, never two. While a batch runs it reports the batch, which is
-  // the number you are waiting on; the standing total comes back the moment the
-  // run ends, which is whenever anyone actually reads it.
-  $('hydration-label').textContent = running && progress
-    ? `Enriching ${progress.done} / ${progress.total}…`
-    : `${enriched} / ${live.length} details loaded`;
-
-  $('hydration-spinner').hidden = !running;
-  $('stop-hydration').hidden = !running;
+  $('hydration-label').textContent = `${enriched} / ${live.length} details loaded`;
 
   // Hydration only ever touches what is in view, so the link has to count the
   // same set — otherwise the enriched-only filters can leave it offering work
@@ -283,10 +279,11 @@ function updateHydrationLabel() {
   const next = Math.min(missingInView, state.settings.batchSize);
   const link = $('load-batch');
 
-  // Gone rather than disabled in both dead cases: Stop replaces it during a run,
-  // and with nothing left to fetch the counter beside it already says so. A
-  // greyed-out "All loaded" is not a control, it is a second counter.
-  link.hidden = running || missingInView === 0;
+  // Gone rather than disabled in both dead cases: a run is already under way and
+  // the meter says so, or there is nothing left to fetch and the counter beside
+  // it says so. A greyed-out "All loaded" is not a control, it is a second
+  // counter.
+  link.hidden = Boolean(state.hydrationQueue) || missingInView === 0;
   link.textContent = `Load ${next}`;
   link.disabled = state.loading;
 
@@ -297,12 +294,75 @@ function updateHydrationLabel() {
 
 function updateBulkBar() {
   const count = state.mode === 'log' ? state.log.selected.size : state.selected.size;
+  // Deliberately not `activeRun()`: hydration only reads, so a batch loading
+  // details is no reason to take the bulk buttons away.
   const running = Boolean(state.actionQueue);
 
   $('bulk-bar').hidden = count === 0 || running;
   $('bulk-count').textContent = `${count} selected`;
   syncSelectAll();
   syncToolbar();
+}
+
+/**
+ * The run the meter reports, and the one its Stop stops.
+ *
+ * Both queues can be live at once — hydration is a read and does not block
+ * acting. When they are, the action wins: it is the one making irreversible
+ * writes to Instagram and the one that can be rate limited.
+ */
+function activeRun() {
+  if (state.actionQueue) return { queue: state.actionQueue, progress: state.actionProgress };
+  if (state.hydrationQueue) return { queue: state.hydrationQueue, progress: state.hydrationProgress };
+  return null;
+}
+
+/**
+ * Paint the toolbar's progress meter from state.
+ *
+ * Rendered rather than pushed, because two independent queues feed it and either
+ * can start or finish while the other is running — the meter has to be able to
+ * hand over mid-run without either queue knowing about the other.
+ *
+ * `--run-pct` is the whole mechanism: the fill reads it as a width, the knockout
+ * copy of the label reads it as a clip. Reset to 0% when nothing is running, or
+ * the next run opens full and counts backwards.
+ */
+function syncRun() {
+  const run = activeRun();
+  const progress = run?.progress;
+  const bar = $('run-progress');
+
+  bar.hidden = !progress;
+  $('toolbar').classList.toggle('is-running', Boolean(progress));
+
+  if (progress) {
+    // Both copies in one statement: they are the same line in two colours, and
+    // a frame where they disagree shows as a seam at the fill's edge.
+    $('run-label').textContent = progress.label;
+    $('run-label-knockout').textContent = progress.label;
+  }
+
+  const pct = progress && progress.total > 0
+    ? Math.round((progress.done / progress.total) * 100)
+    : 0;
+  bar.style.setProperty('--run-pct', `${pct}%`);
+
+  syncToolbar();
+}
+
+/**
+ * Freeze the list while writes are in flight — dimmed, and inert but for the
+ * profile links. Hydration is excluded: it changes nothing on Instagram's side,
+ * so there is no reason to stop you filtering and selecting through it.
+ */
+function syncActing() {
+  const acting = Boolean(state.actionQueue);
+  document.body.classList.toggle('is-acting', acting);
+  renderer.setInert(acting);
+  // Follow-back is a write too, and it acts on the log — so the log freezes on
+  // the same terms. Patched in place here; renderLog reapplies it on repaint.
+  for (const box of document.querySelectorAll('.log-check')) box.disabled = acting;
 }
 
 /**
@@ -330,7 +390,7 @@ function syncSelectAll() {
 
 /** The floating bar exists only while it has something to show. */
 function syncToolbar() {
-  const visible = !$('bulk-bar').hidden || !$('action-progress').hidden;
+  const visible = !$('bulk-bar').hidden || !$('run-progress').hidden;
   $('toolbar').hidden = !visible;
   document.body.classList.toggle('has-toolbar', visible);
 }
@@ -462,6 +522,9 @@ function recomputeLog() {
     now: Date.now(),
     selected: state.log.selected,
     canFollow,
+    // A follow-back run repaints this list as its own writes land in the log, so
+    // the freeze has to be reapplied on every render, not just when it starts.
+    inert: Boolean(state.actionQueue),
   });
 
   for (const tab of document.querySelectorAll('.log-tab')) {
@@ -523,11 +586,14 @@ async function runFollowBack() {
       return result;
     },
     onProgress: ({ done, total }) => {
-      $('action-label').textContent = `Following ${done} / ${total}…`;
+      state.actionProgress = { label: `Following ${done} / ${total}…`, done, total };
+      syncRun();
     },
     onFinish: ({ halted, stopped, failures, done, total }) => {
       state.actionQueue = null;
-      $('action-progress').hidden = true;
+      state.actionProgress = null;
+      syncRun();
+      syncActing();
 
       if (halted) showBanner(`Stopped after ${done} of ${total} — Instagram returned "${halted}". Wait before retrying.`);
       else if (stopped) setStatus(`Stopped after ${done} of ${total}.`);
@@ -541,8 +607,12 @@ async function runFollowBack() {
   });
 
   state.actionQueue = queue;
-  $('action-label').textContent = `Following 0 / ${unique.length}…`;
-  $('action-progress').hidden = false;
+  // Seeded before the first item rather than left to the first onProgress: at up
+  // to 3s per write, the meter would otherwise sit closed through the whole of
+  // the first one.
+  state.actionProgress = { label: `Following 0 / ${unique.length}…`, done: 0, total: unique.length };
+  syncRun();
+  syncActing();
   updateBulkBar();
 
   await queue.run();
@@ -663,10 +733,14 @@ async function runHydrationBatch() {
       }
       return { ok: true };
     },
-    // No setStatus here: the hydration row is already saying this, and the
-    // status line is for what happens *after* a run, not during it.
+    // No setStatus here: the meter is already saying this, and the status line
+    // is for what happens *after* a run, not during it.
     onProgress: async ({ done, total }) => {
-      state.hydrationProgress = { done, total };
+      state.hydrationProgress = { label: `Enriching ${done} / ${total}…`, done, total };
+      syncRun();
+      // The row's standing total climbs alongside the meter's batch count. Two
+      // numbers, but different questions: how much of the whole list has details
+      // versus how far through this batch we are.
       updateHydrationLabel();
       // Batch the disk writes; one flush per profile would be pointless churn.
       if (Object.keys(fresh).length - flushed >= 10) {
@@ -678,6 +752,7 @@ async function runHydrationBatch() {
       await store.saveProfiles(fresh);
       state.hydrationQueue = null;
       state.hydrationProgress = null;
+      syncRun();
 
       if (halted) showBanner(`Enrichment stopped — Instagram returned "${halted}". Wait a while before retrying.`);
       else if (stopped) setStatus('Enrichment stopped.');
@@ -691,8 +766,9 @@ async function runHydrationBatch() {
   state.hydrationQueue = queue;
   // Seeded before the first item rather than left to the first onProgress: the
   // queue only reports once an item resolves, and at ~2s per item that would
-  // leave the row showing the idle count for the whole of the first request.
-  state.hydrationProgress = { done: 0, total: targets.length };
+  // leave the meter closed for the whole of the first request.
+  state.hydrationProgress = { label: `Enriching 0 / ${targets.length}…`, done: 0, total: targets.length };
+  syncRun();
   updateHydrationLabel();
   await queue.run();
 }
@@ -814,11 +890,14 @@ async function runBulk(action) {
     pacing: PACING.moderate,
     handler: (id) => actOnce(id, action),
     onProgress: ({ done, total }) => {
-      $('action-label').textContent = `${spec.gerund} ${done} / ${total}…`;
+      state.actionProgress = { label: `${spec.gerund} ${done} / ${total}…`, done, total };
+      syncRun();
     },
     onFinish: ({ halted, stopped, failures, done, total }) => {
       state.actionQueue = null;
-      $('action-progress').hidden = true;
+      state.actionProgress = null;
+      syncRun();
+      syncActing();
 
       if (halted) showBanner(`Stopped after ${done} of ${total} — Instagram returned "${halted}". Wait before retrying.`);
       else if (stopped) setStatus(`Stopped after ${done} of ${total}.`);
@@ -835,8 +914,11 @@ async function runBulk(action) {
   });
 
   state.actionQueue = queue;
-  $('action-label').textContent = `${spec.gerund} 0 / ${ids.length}…`;
-  $('action-progress').hidden = false;
+  // Seeded before the first item, as in runFollowBack — at up to 3s per write
+  // the meter would otherwise stay closed through the whole of the first one.
+  state.actionProgress = { label: `${spec.gerund} 0 / ${ids.length}…`, done: 0, total: ids.length };
+  syncRun();
+  syncActing();
   updateBulkBar();
 
   await queue.run();
@@ -1121,8 +1203,9 @@ function bind() {
   $('reset-filters').addEventListener('click', resetFilters);
 
   $('load-batch').addEventListener('click', () => runHydrationBatch());
-  $('stop-hydration').addEventListener('click', () => state.hydrationQueue?.stop());
-  $('action-stop').addEventListener('click', () => state.actionQueue?.stop());
+  // One Stop for both queues, stopping whichever the meter is reporting — the
+  // same precedence, so the button always means what the label beside it says.
+  $('run-stop').addEventListener('click', () => activeRun()?.queue.stop());
 
   bindLog();
 
