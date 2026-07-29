@@ -156,16 +156,16 @@
        controlling the panel, and a narrow panel cannot afford a band that is
        pinned open once you are past the first screen of rows. -->
   <div id="hydration" class="hydration">
+    <!-- One state, always: the standing total, which climbs as profiles land.
+         A run in flight is reported by the toolbar meter instead — this row is
+         inside the scroller and scrolls away, and a 100-profile batch takes
+         over three minutes to finish somewhere off screen. -->
     <div class="hydration-line">
-      <!-- A batch advances once every ~2s, so between ticks the counter alone
-           cannot distinguish "working" from "stalled". -->
-      <span id="hydration-spinner" class="spinner spinner-inline" hidden></span>
       <span id="hydration-label" title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front.">0 / 0 details loaded</span>
-      <!-- Links, not buttons: this row reports on the list and offers one
+      <!-- A link, not a button: this row reports on the list and offers one
            optional action, which does not warrant the weight of a control
            surface above every screenful of rows. -->
       <button id="load-batch" class="link-inline" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
-      <button id="stop-hydration" class="link-inline" hidden>Stop</button>
     </div>
   </div>
 
@@ -190,9 +190,30 @@
 <!-- Acting is bulk-only, so the controls live in one floating bar over the
      list rather than repeating on every row. -->
 <div id="toolbar" class="toolbar" hidden>
-  <div id="action-progress" class="action-progress" hidden>
-    <span id="action-label"></span>
-    <button id="action-stop" class="btn btn-small btn-quiet">Stop</button>
+  <!-- The bar is the progress meter: --run-pct drives both the fill's width and
+       the knockout layer's clip, so the coloured text can never disagree with
+       the colour behind it. The line is rendered twice for that reason — once in
+       --text over the card, once in --primary-text clipped to the fill. Only the
+       first is exposed; the second is the same words in another colour.
+
+       Shared by both queues. Whichever is running fills this in; when both are,
+       the action wins, because it is the one writing to Instagram. -->
+  <div id="run-progress" class="run-progress" hidden>
+    <div class="run-fill"></div>
+
+    <div class="run-line">
+      <span class="spinner spinner-inline"></span>
+      <span id="run-label"></span>
+    </div>
+
+    <div class="run-line run-line-knockout" aria-hidden="true">
+      <span class="spinner spinner-inline"></span>
+      <span id="run-label-knockout"></span>
+    </div>
+
+    <!-- Carries its own solid background: it is the one thing in this bar that
+         must stay a legible control at every fill level, including 100%. -->
+    <button id="run-stop" class="btn btn-small btn-quiet">Stop</button>
   </div>
 
   <div id="bulk-bar" class="bulk-bar" hidden>

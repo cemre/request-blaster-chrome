@@ -128,7 +128,10 @@ body:not([data-state='loading']) .loading { display: none !important; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Slowed rather than stopped: it is the one thing saying "still working"
+     between ticks that can be up to three seconds apart. */
   .spinner { animation-duration: 2.4s; }
+  .run-fill { transition: none; }
 }
 
 html, body {
@@ -494,7 +497,11 @@ h1 {
 /* ------------------------------------------------------- bulk + progress */
 
 /* Floats over the list rather than sitting in the flow: the actions are the
-   one thing that should stay reachable no matter how far down you scroll. */
+   one thing that should stay reachable no matter how far down you scroll.
+
+   The padding lives on the children rather than here, so the progress meter can
+   run full-bleed to the card's edges; overflow clips its square corners back
+   into the card's radius. */
 .toolbar {
   position: fixed;
   left: 0;
@@ -502,12 +509,18 @@ h1 {
   bottom: 0;
   z-index: 5;
   margin: 0 8px 8px;
-  padding: 8px 10px;
   border-radius: var(--r-lg);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
+  overflow: hidden;
   box-shadow: 0 -1px 0 var(--border), 0 -8px 24px rgba(0, 0, 0, 0.12);
 }
+
+/* The fill starts at zero width, so at "0 / 13" it says nothing — and that is
+   the loudest moment there is, the instant an irreversible run is confirmed.
+   The border and the spinner answer *whether* something is running; the fill
+   only ever answers *how far*. */
+.toolbar.is-running { border-color: var(--primary); }
 
 /* Reserve room so the last row can always be scrolled clear of the bar. */
 body.has-toolbar .list-scroll { padding-bottom: 92px; }
@@ -516,13 +529,81 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 8px 10px;
 }
 
-.bulk-top,
-.action-progress {
+/* Only when both are on screen — hydration runs while a selection is waiting.
+   :not([hidden]) because an adjacent sibling still matches while display:none,
+   which would leave the seam floating above the bulk bar on its own. */
+.run-progress:not([hidden]) + .bulk-bar { border-top: 1px solid var(--border); }
+
+.bulk-top {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* --------------------------------------------------------- progress meter */
+
+/* One custom property drives the whole thing: the fill reads it as a width, the
+   knockout layer reads it as a clip inset. They resolve against the same box, so
+   the white text and the blue behind it cannot drift apart by a pixel. */
+.run-progress {
+  --run-pct: 0%;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+}
+
+.run-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--run-pct);
+  background: var(--primary);
+  /* Glides between ticks rather than snapping. It never runs ahead of the
+     queue — the width only ever moves to a figure already reported. */
+  transition: width 240ms ease-out;
+}
+
+.run-line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The same line again, in the on-fill colour, clipped to exactly the fill's
+   width. Its padding matches .run-progress so both copies start at the same x
+   and the boundary shows no seam. */
+.run-line-knockout {
+  position: absolute;
+  inset: 0;
+  padding: 9px 10px;
+  color: var(--primary-text);
+  clip-path: inset(0 calc(100% - var(--run-pct)) 0 0);
+}
+
+.run-line-knockout .spinner {
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: var(--primary-text);
+}
+
+/* Never under the fill: this is the only control in the bar, and at 100% the
+   whole surface behind it is --primary. */
+#run-stop {
+  position: relative;
+  z-index: 2;
+  background: var(--bg-elevated);
+}
+
+#run-stop:hover:not(:disabled) {
+  background: var(--secondary-bg);
+  color: var(--text);
 }
 
 /* Wraps so Reject drops to a second line rather than being clipped — these are
@@ -542,11 +623,16 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 .bulk-count,
-#action-label {
+#run-label,
+#run-label-knockout {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status {
@@ -590,10 +676,32 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   box-shadow: inset 3px 0 0 var(--primary);
 }
 
-.row.is-busy { opacity: 0.55; }
 .row.is-accepted,
 .row.is-rejected { opacity: 0.4; }
 .row.is-failed { background: var(--danger-bg); }
+
+/* While the action queue runs, the list is what is being written to, so it goes
+   inert. The filter and result bars stay live — they only read.
+
+   The row being written to used to be dimmed to 0.55, which made the one thing
+   actually happening the faintest thing on screen. It now keeps full opacity
+   against 40% neighbours, which is all the lighting it needs: no new edge
+   colour, and the inset --primary edge goes on meaning "selected" alone. */
+body.is-acting .row,
+body.is-acting .log-row {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+
+body.is-acting .row.is-busy { opacity: 1; }
+
+/* Opening a profile survives the freeze. It is a read, it changes nothing, and
+   it is the one thing worth doing mid-run — seeing who you are about to reject.
+   Everything else in a row is a selection target, and the queue is already
+   holding the ids it started with. */
+body.is-acting .row [data-action='open'],
+body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
 
 .row-check {
   width: 16px;
