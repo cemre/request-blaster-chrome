@@ -7,7 +7,9 @@
 import * as api from './api.js';
 import * as history from './history.js';
 import * as store from './store.js';
+// #region harvest — build.js deletes this region from the store package
 import { mountHarvest } from './harvest/mount.js';
+// #endregion harvest
 import { PACING, ThrottledQueue } from './queue.js';
 import { ListRenderer, renderLog } from './render.js';
 import {
@@ -1379,11 +1381,16 @@ function bind() {
     if (state.actionQueue) event.preventDefault();
   });
 
+  // #region harvest — build.js deletes this region from the store package
   // Deleting this call plus src/harvest/ removes the harvest feature entirely.
   // It reads the log selection through a closure and drives the meter through
   // externalRun rather than importing panel state, so nothing here depends on
   // the feature existing — mountHarvest defaults externalRun to a no-op if a
   // future caller omits it, so this call is not load-bearing either.
+  //
+  // That removal is what the store build does: `npm run build` strips both
+  // #region harvest blocks in this file, so the published package can ship
+  // without asking for the `downloads` permission the harvest needs.
   mountHarvest({
     selectedLogEntries: () =>
       state.log.visible.filter((record) => state.log.selected.has(record.userId)),
@@ -1391,6 +1398,7 @@ function bind() {
     externalRun,
     skipNotes,
   });
+  // #endregion harvest
 }
 
 async function init() {
