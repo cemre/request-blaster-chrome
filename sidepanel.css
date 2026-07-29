@@ -17,6 +17,13 @@
   --bg-hover: #FAFAFA;
   --bg-selected: #F5F5F5;
 
+  /* The tabs, filter bar and result bar sit on this; the list keeps --bg. The
+     bands used to be white on white and read as one undifferentiated surface,
+     so the seam between "controls" and "the thing they control" was a hairline
+     border doing all the work alone. Chips take --bg-elevated on top of it, so
+     they read as controls rather than as more of the band. */
+  --bg-chrome: #EFEFEF;
+
   --text: #262626;
   --text-secondary: #737373;
   --text-tertiary: #A8A8A8;
@@ -48,6 +55,7 @@
     --bg-elevated: #262626;
     --bg-hover: #141414;
     --bg-selected: #1F1F1F;
+    --bg-chrome: #1A1A1A;
 
     --text: #F5F5F5;
     --text-secondary: #A8A8A8;
@@ -147,6 +155,7 @@ h1 {
 
 .panel-header {
   padding: 0 var(--gap);
+  background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
 }
 
@@ -180,9 +189,16 @@ h1 {
   border-bottom-color: var(--text);
 }
 
-/* Sits directly above the list it describes, not up in the header. */
+/* First thing in the scroller, so it heads the list it describes and then
+   scrolls out of the way. It keeps --bg rather than the chrome tone for that
+   reason: it belongs to the list, not to the pinned controls above it.
+
+   One line of text and a link — there is no progress bar. The counter already
+   states the fraction, and a bar restating it earned a permanent band of pixels
+   above every screenful of rows for a number nobody watches continuously. */
 .hydration {
   padding: 7px var(--gap);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -194,21 +210,16 @@ h1 {
   color: var(--text-secondary);
 }
 
-.hydration-line span { flex: 1; font-variant-numeric: tabular-nums; }
+/* By id, not `span`: the line also holds the spinner, which must keep its own
+   size. min-width so the label yields to the link instead of pushing it off
+   the edge — the count is worth less than the control that changes it. */
+#hydration-label { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
 
-.progress {
-  height: 3px;
-  margin-top: 6px;
-  border-radius: 2px;
-  background: var(--secondary-bg);
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  width: 0;
-  background: var(--primary);
-  transition: width 0.2s;
+/* The loading block's spinner, sized down to sit on a 12px line. */
+.spinner-inline {
+  width: 11px;
+  height: 11px;
+  border-width: 1.5px;
 }
 
 /* ---------------------------------------------------------------- banner */
@@ -233,12 +244,17 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
 }
 
+/* Wraps rather than overflows. The panel is user-resizable down to roughly
+   260px, where three chips and a toggle stop fitting on one line; without this
+   the last chips were simply clipped off the right edge with nothing to say so. */
 .filter-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
 }
 
@@ -248,11 +264,19 @@ h1 {
 .result-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   padding: 7px var(--gap);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-chrome);
+  /* The one seam that separates the pinned controls from the list. Stronger
+     than the hairlines between the bands above it, which divide like things. */
+  border-bottom: 1px solid var(--border-strong);
 }
 
+/* Deliberately not paired with flex-grow on the Sort chip: flexible lengths
+   resolve before auto margins do, so a growing Sort would eat the free space
+   this needs and the count would stop sitting hard right at wide widths. Sort
+   stays content-sized and simply wraps to its own line when it stops fitting. */
 .result-bar .muted { margin-left: auto; }
 
 .search {
@@ -267,15 +291,21 @@ h1 {
 
 .search::placeholder { color: var(--text-tertiary); }
 
+/* nowrap because a chip that breaks its own label mid-phrase ("Already /
+   follow") is taller than the bar and still no easier to read. It wraps to the
+   next line whole, or it shrinks — see .select-chip select. */
 .toggle-chip,
 .select-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  max-width: 100%;
   padding: 4px 8px;
   font-size: 12px;
+  white-space: nowrap;
   border-radius: var(--r-full);
   border: 1px solid var(--border);
+  background: var(--bg-elevated);
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
@@ -284,11 +314,29 @@ h1 {
 .toggle-chip:hover,
 .select-chip:hover { border-color: var(--border-strong); color: var(--text); }
 
+/* The checkbox is gone from view, so the pill is the state. Filled --primary
+   rather than the grey the other "on" controls use: this is the one chip whose
+   on-ness is not otherwise legible — no popover count, no selected tab — and an
+   on filter silently shortens the list. The box stays in the DOM for its
+   semantics, which is what :has() and the label click are still reading. */
 .toggle-chip:has(input:checked) {
-  background: var(--secondary-bg);
-  border-color: var(--border-strong);
-  color: var(--text);
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-text);
   font-weight: 500;
+}
+
+/* Clipped rather than display:none — it has to keep taking focus from the
+   keyboard, and the ring is drawn on the pill around it. */
+.toggle-chip input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 .toggle-chip:has(input:focus-visible),
@@ -298,11 +346,16 @@ h1 {
   outline-offset: 2px;
 }
 
-.toggle-chip input { accent-color: var(--primary); }
+/* The shared ring is --primary, which is this chip's own fill once checked — it
+   would read as a glow rather than focus. */
+.toggle-chip:has(input:checked):has(input:focus-visible) { outline-color: var(--text); }
 
+/* min-width lets the select shrink below its longest option instead of forcing
+   the chip past the panel edge; the native control ellipsises what is left. */
 .select-chip select,
 .select-chip .num {
   font: inherit;
+  min-width: 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -310,6 +363,26 @@ h1 {
 }
 
 .select-chip .num { width: 60px; cursor: text; }
+
+/* A chip that names its control instead of showing its value. The real <select>
+   covers the chip at zero opacity, so the click target, the keyboard behaviour
+   and the popup's anchoring all stay native — only the rendered text is ours.
+   Opacity, not visibility or display: those would stop it taking the click. */
+.select-chip-menu { position: relative; }
+
+.select-chip-menu select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+
+.chip-chevron { flex: none; }
+
+/* Only drawn where the real select's arrow has been hidden — see the narrow
+   block at the foot of this file. */
+.chevron-standin { display: none; }
 
 .warning {
   margin: 8px 0 0;
@@ -330,18 +403,23 @@ h1 {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
+  white-space: nowrap;
   border-radius: var(--r-full);
   border: 1px solid var(--border);
-  background: transparent;
+  background: var(--bg-elevated);
   color: var(--text-secondary);
   cursor: pointer;
 }
 
-.chip-button:hover { border-color: var(--border-strong); color: var(--text); }
+.chip-button:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+
+/* Select-all with an empty list. Matches .btn:disabled — without it the chip
+   looks live and simply does nothing when clicked. */
+.chip-button:disabled { opacity: 0.4; cursor: default; }
 
 .chip-button[aria-expanded='true'],
 .chip-button.is-filtering {
-  background: var(--secondary-bg);
+  background: var(--secondary-bg-hover);
   border-color: var(--border-strong);
   color: var(--text);
   font-weight: 500;
@@ -357,13 +435,20 @@ h1 {
 .popover-host { position: relative; }
 
 /* Overlays the list rather than pushing it down — the disclosure this
-   replaces moved every row on screen each time it opened. */
+   replaces moved every row on screen each time it opened.
+
+   `left` is a starting point only: the chip it hangs from can sit anywhere
+   along a bar that now wraps, so panel.js nudges the panel back inside the
+   viewport on open. Nothing here can do that — the clamp needs both the chip's
+   position and the panel's own width, and neither is known to CSS. */
 .popover {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
   z-index: 10;
+  width: max-content;
   min-width: 200px;
+  max-width: calc(100vw - 2 * var(--gap));
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -440,8 +525,11 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   gap: 6px;
 }
 
+/* Wraps so Reject drops to a second line rather than being clipped — these are
+   the panel's only irreversible controls and none of them may go missing. */
 .bulk-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -564,7 +652,14 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   border-radius: 4px;
 }
 
-.username { font-weight: 620; }
+/* A 30-character username and two chips do not fit a narrow panel, and the
+   username is the one part that can give ground without losing meaning. */
+.username {
+  font-weight: 620;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .row-name {
   display: block;
@@ -593,8 +688,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 
 .row-name,
 .row-stats,
-.row-mutuals,
-.row-bio {
+.row-mutuals {
   font-size: 11.5px;
   color: var(--text-secondary);
   overflow: hidden;
@@ -604,7 +698,6 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 
 .row-stats { font-variant-numeric: tabular-nums; }
 .row-mutuals { color: var(--text-tertiary); }
-.row-bio { color: var(--text-tertiary); }
 
 .row-state {
   align-self: center;
@@ -621,6 +714,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
 }
 
@@ -628,9 +722,10 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   font: inherit;
   font-size: 12px;
   padding: 4px 12px;
+  white-space: nowrap;
   border-radius: var(--r-full);
   border: 1px solid var(--border);
-  background: transparent;
+  background: var(--bg-elevated);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -643,7 +738,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 .log-tab.is-active {
-  background: var(--secondary-bg);
+  background: var(--secondary-bg-hover);
   border-color: var(--border-strong);
   color: var(--text);
   font-weight: 500;
@@ -780,23 +875,6 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 
 .btn-quiet:hover:not(:disabled) { background: var(--secondary-bg); color: var(--text); }
 
-/* Used by the Load button while nothing has been loaded yet — the one moment
-   the panel has a single obvious next action. */
-.btn-primary {
-  background: var(--primary);
-  color: var(--primary-text);
-  font-weight: 500;
-}
-
-.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
-
-/* The shared ring is --primary, which is this button's own fill — it would
-   read as a halo. Ring in --text and hold it off the fill with a white gap. */
-.btn-primary:focus-visible {
-  outline-color: var(--text);
-  box-shadow: 0 0 0 2px var(--bg);
-}
-
 /* Equal in weight to its siblings at rest. Only the hover is red. */
 .btn-reject:hover:not(:disabled) {
   background: var(--danger-bg);
@@ -821,10 +899,13 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   cursor: pointer;
 }
 
-.icon-toggle:hover { background: var(--secondary-bg); color: var(--text); }
+/* Lifts to the chip surface rather than to --secondary-bg, which is the same
+   value as the band it sits on and would leave the hover invisible. Rest,
+   hover and active then read as three steps: band, chip, pressed. */
+.icon-toggle:hover { background: var(--bg-elevated); color: var(--text); }
 
 .icon-toggle.is-active {
-  background: var(--secondary-bg);
+  background: var(--secondary-bg-hover);
   border-color: var(--border-strong);
   color: var(--text);
 }
@@ -847,6 +928,11 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 
 .link-inline:hover { color: var(--primary); }
 
+/* The one moment the panel has a single obvious next action — nothing enriched
+   yet. Colour rather than weight; a 12px link has nowhere bolder to go. */
+.link-inline.is-suggested { color: var(--primary); font-weight: 500; }
+.link-inline.is-suggested:hover { color: var(--primary-hover); }
+
 .link-inline:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
@@ -859,7 +945,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   padding: 16px;
-  max-width: 280px;
+  max-width: min(280px, calc(100vw - 24px));
   color: var(--text);
   background: var(--bg-elevated);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
@@ -882,3 +968,60 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 .confirm::backdrop { background: rgba(0, 0, 0, 0.4); }
+
+/* ---------------------------------------------------------------- narrow */
+
+/* Chrome's side panel is dragged to whatever width the user has room for, and
+   people run it narrow — it is a sidebar next to Instagram, not a window. The
+   rules above already wrap and truncate rather than clip; this reclaims the
+   horizontal space that wrapping costs, so fewer things need to wrap at all.
+   The document is the panel, so a plain width query is the panel's width. */
+@media (max-width: 380px) {
+  :root { --gap: 8px; }
+
+  .toggle-chip,
+  .select-chip,
+  .chip-button { padding: 4px 6px; }
+
+  .log-tab { padding: 4px 9px; }
+
+  /* Together with the padding above, these buy back ~11px across the filter
+     bar — enough that all four controls still share one line at 340px instead
+     of exiling the search toggle to a row of its own. */
+  .filter-bar { gap: 4px; }
+  .icon-toggle { width: 26px; }
+
+  /* The widest thing in the bar is a word naming a control whose value is
+     right beside it. Drop the word and the value carries the chip: "1+", "none".
+     display, not visibility — this must also leave the accessibility tree, and
+     the select's aria-label is what names it from here on. */
+  .label-wide { display: none; }
+
+  /* Except at the default, where the value is "any" and names nothing at all.
+     There the chip goes back to naming the control and hides the select behind
+     it — the same overlay .select-chip-menu uses, so the popup stays native.
+     option:checked tracks the live selection, so this flips as it is used. */
+  .mutuals-chip:has(option[value='0']:checked) { position: relative; }
+
+  .mutuals-chip:has(option[value='0']:checked) .label-wide,
+  .mutuals-chip:has(option[value='0']:checked) .chevron-standin { display: block; }
+
+  .mutuals-chip:has(option[value='0']:checked) select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+  }
+
+  /* 6px of grid gap buys back 4px of the row's text column, twice over. */
+  .row { gap: 6px; }
+  .avatar { width: 32px; height: 32px; }
+  .row-check { margin-top: 3px; }
+
+  /* Shares its row with the username and bio, which are worth more than a
+     status word that is also spelled out in the status line. */
+  .row-state { max-width: 64px; }
+
+  .bulk-actions .btn { padding: 7px 6px; }
+}
