@@ -61,6 +61,9 @@ const state = {
   filters: { ...DEFAULT_FILTERS },
   capped: false,
   hydrationQueue: null,
+  // Batch progress while a hydration run is in flight, so the row can report
+  // the run instead of the standing total. Null whenever nothing is running.
+  hydrationProgress: null,
   actionQueue: null,
   loading: false,
 
@@ -185,24 +188,45 @@ function updateSpamChip() {
   $('spam-toggle').classList.toggle('is-filtering', active > 0);
 }
 
+/**
+ * The whole hydration row: counter, spinner, and which of Load / Stop is on
+ * offer. One function owns all three so they cannot disagree about whether a
+ * batch is running.
+ */
 function updateHydrationLabel() {
   const live = state.rows.filter((row) => !state.doneIds.has(row.id));
   const enriched = live.filter((row) => row.enriched).length;
-  $('hydration-label').textContent = `${enriched} / ${live.length} details loaded`;
-  $('hydration-bar').style.width = live.length ? `${(enriched / live.length) * 100}%` : '0%';
 
-  // Hydration only ever touches what is in view, so the button has to count the
+  const running = Boolean(state.hydrationQueue);
+  const progress = state.hydrationProgress;
+
+  // One counter, never two. While a batch runs it reports the batch, which is
+  // the number you are waiting on; the standing total comes back the moment the
+  // run ends, which is whenever anyone actually reads it.
+  $('hydration-label').textContent = running && progress
+    ? `Enriching ${progress.done} / ${progress.total}…`
+    : `${enriched} / ${live.length} details loaded`;
+
+  $('hydration-spinner').hidden = !running;
+  $('stop-hydration').hidden = !running;
+
+  // Hydration only ever touches what is in view, so the link has to count the
   // same set — otherwise the enriched-only filters can leave it offering work
   // that runHydrationBatch would then decline to do.
   const missingInView = state.visible.filter((row) => !row.enriched).length;
   const next = Math.min(missingInView, state.settings.batchSize);
-  const button = $('load-batch');
-  button.textContent = missingInView === 0 ? 'All loaded' : `Load ${next}`;
-  button.disabled = state.loading || missingInView === 0 || Boolean(state.hydrationQueue);
+  const link = $('load-batch');
+
+  // Gone rather than disabled in both dead cases: Stop replaces it during a run,
+  // and with nothing left to fetch the counter beside it already says so. A
+  // greyed-out "All loaded" is not a control, it is a second counter.
+  link.hidden = running || missingInView === 0;
+  link.textContent = `Load ${next}`;
+  link.disabled = state.loading;
 
   // Nothing loaded yet is the one state where the panel has a single obvious
-  // next action, so the button is allowed to say so.
-  button.classList.toggle('btn-primary', enriched === 0 && missingInView > 0 && !button.disabled);
+  // next action, so the link is allowed to say so.
+  link.classList.toggle('is-suggested', enriched === 0 && !link.hidden && !link.disabled);
 }
 
 function updateBulkBar() {
@@ -211,7 +235,31 @@ function updateBulkBar() {
 
   $('bulk-bar').hidden = count === 0 || running;
   $('bulk-count').textContent = `${count} selected`;
+  syncSelectAll();
   syncToolbar();
+}
+
+/**
+ * Which way each select-all button will go, derived from the selection rather
+ * than toggled on click. Ticking the last row by hand has to flip the label
+ * too, or the button starts describing an action it will not perform.
+ *
+ * Both modes are synced together: only one is on screen at a time, and the
+ * hidden one costs nothing to keep honest.
+ */
+function syncSelectAll() {
+  const shownAll = state.visible.length > 0
+    && state.visible.every((row) => state.selected.has(row.id));
+  $('select-all').textContent = shownAll ? 'Deselect all' : 'Select all';
+  $('select-all').disabled = state.visible.length === 0;
+
+  // By account, not by row: the same person can hold two followable rows, and
+  // the selection is keyed on who they are.
+  const followable = [...new Set(state.log.followable.map((record) => record.userId))];
+  const logAll = followable.length > 0
+    && followable.every((id) => state.log.selected.has(id));
+  $('log-select-all').textContent = logAll ? 'Deselect all' : 'Select all';
+  $('log-select-all').disabled = followable.length === 0;
 }
 
 /** The floating bar exists only while it has something to show. */
@@ -238,8 +286,6 @@ function setMode(mode) {
   // mean the toolbar's buttons no longer match what is ticked.
   state.selected.clear();
   state.log.selected.clear();
-  $('select-all').checked = false;
-  $('log-select-all').checked = false;
   renderer.setSelection(state.selected);
 
   if (mode === 'log' && !state.log.loaded) loadLogPage();
@@ -422,7 +468,6 @@ async function runFollowBack() {
       else if (failures.length) setStatus(`Done, ${failures.length} failed.`);
       else setStatus(`Followed back ${done}.`);
 
-      $('log-select-all').checked = false;
       recomputeLog();
     },
   });
@@ -521,7 +566,9 @@ async function runHydrationBatch() {
   }
 
   hideBanner();
-  $('stop-hydration').hidden = false;
+  // The row is about to become the only progress indicator, so clear whatever
+  // the last run left behind rather than let it read as news about this one.
+  setStatus('');
   const fresh = {};
   let flushed = 0;
 
@@ -548,8 +595,10 @@ async function runHydrationBatch() {
       }
       return { ok: true };
     },
+    // No setStatus here: the hydration row is already saying this, and the
+    // status line is for what happens *after* a run, not during it.
     onProgress: async ({ done, total }) => {
-      setStatus(`Enriching ${done} / ${total}…`);
+      state.hydrationProgress = { done, total };
       updateHydrationLabel();
       // Batch the disk writes; one flush per profile would be pointless churn.
       if (Object.keys(fresh).length - flushed >= 10) {
@@ -560,7 +609,7 @@ async function runHydrationBatch() {
     onFinish: async ({ halted, stopped, failures }) => {
       await store.saveProfiles(fresh);
       state.hydrationQueue = null;
-      $('stop-hydration').hidden = true;
+      state.hydrationProgress = null;
 
       if (halted) showBanner(`Enrichment stopped — Instagram returned "${halted}". Wait a while before retrying.`);
       else if (stopped) setStatus('Enrichment stopped.');
@@ -572,6 +621,10 @@ async function runHydrationBatch() {
   });
 
   state.hydrationQueue = queue;
+  // Seeded before the first item rather than left to the first onProgress: the
+  // queue only reports once an item resolves, and at ~2s per item that would
+  // leave the row showing the idle count for the whole of the first request.
+  state.hydrationProgress = { done: 0, total: targets.length };
   updateHydrationLabel();
   await queue.run();
 }
@@ -749,7 +802,6 @@ function readFilters() {
     botRatio: $('f-bot-ratio').checked,
     search: $('search').value,
   };
-  $('select-all').checked = false;
   recompute();
 }
 
@@ -762,7 +814,6 @@ function bindLog() {
     tab.addEventListener('click', () => {
       state.log.kind = tab.dataset.kind;
       state.log.selected.clear();
-      $('log-select-all').checked = false;
       recomputeLog();
     });
   }
@@ -816,10 +867,13 @@ function bindLog() {
     toggleLogSelection(row.dataset.id, checkbox.checked);
   });
 
-  $('log-select-all').addEventListener('change', () => {
-    const checked = $('log-select-all').checked;
+  $('log-select-all').addEventListener('click', () => {
+    const followable = [...new Set(state.log.followable.map((record) => record.userId))];
+    const allSelected = followable.length > 0
+      && followable.every((id) => state.log.selected.has(id));
+
     state.log.selected.clear();
-    if (checked) for (const record of state.log.followable) state.log.selected.add(record.userId);
+    if (!allSelected) for (const id of followable) state.log.selected.add(id);
     recomputeLog();
   });
 
@@ -841,7 +895,6 @@ function bindLog() {
     state.log.records = [];
     state.log.seen.clear();
     state.log.selected.clear();
-    $('log-select-all').checked = false;
     recomputeLog();
     setStatus('Log cleared.');
   });
@@ -885,6 +938,30 @@ function setSearchOpen(open, { field, button, onClear }) {
     field.value = '';
     onClear();
   }
+}
+
+/** Breathing room between a popover and the panel edge. */
+const POPOVER_MARGIN = 8;
+
+/**
+ * Slide an open popover back inside the panel.
+ *
+ * It is positioned against the chip that opens it, and the filter bar wraps, so
+ * that chip can be anywhere along either line. In a panel dragged narrow, a
+ * popover left where CSS put it hangs off one edge or the other — and the
+ * overflow is unreachable, since the panel is the whole viewport and does not
+ * scroll sideways.
+ */
+function clampPopover(panel) {
+  panel.style.left = '0px';
+
+  const rect = panel.getBoundingClientRect();
+  const overflowRight = rect.right - (window.innerWidth - POPOVER_MARGIN);
+  if (overflowRight <= 0) return;
+
+  // Never past the left edge: a popover pinned to the right is recoverable,
+  // one whose first checkbox sits at x = -40 is not.
+  panel.style.left = `${-Math.min(overflowRight, rect.left - POPOVER_MARGIN)}px`;
 }
 
 function bind() {
@@ -931,11 +1008,18 @@ function bind() {
   const setSpamOpen = (open) => {
     $('spam-panel').hidden = !open;
     $('spam-toggle').setAttribute('aria-expanded', String(open));
+    if (open) clampPopover($('spam-panel'));
   };
 
   $('spam-toggle').addEventListener('click', (event) => {
     event.stopPropagation();
     setSpamOpen($('spam-panel').hidden);
+  });
+
+  // Dragging the side panel's edge is how this UI gets narrow in the first
+  // place, and it does not dismiss an open popover the way a click would.
+  window.addEventListener('resize', () => {
+    if (!$('spam-panel').hidden) clampPopover($('spam-panel'));
   });
 
   // Clicks inside the panel belong to its own controls; anywhere else dismisses.
@@ -970,9 +1054,15 @@ function bind() {
 
   bindLog();
 
-  $('select-all').addEventListener('change', () => {
-    if ($('select-all').checked) for (const row of state.visible) state.selected.add(row.id);
-    else state.selected.clear();
+  $('select-all').addEventListener('click', () => {
+    // Deselect clears the whole selection, not just what is shown: rows picked
+    // under an earlier filter are still selected and still counted by the
+    // toolbar, so leaving them behind would contradict the word "all".
+    const shownAll = state.visible.length > 0
+      && state.visible.every((row) => state.selected.has(row.id));
+    if (shownAll) state.selected.clear();
+    else for (const row of state.visible) state.selected.add(row.id);
+
     renderer.setSelection(state.selected);
     updateBulkBar();
   });
@@ -984,11 +1074,9 @@ function bind() {
   $('bulk-clear').addEventListener('click', () => {
     if (state.mode === 'log') {
       state.log.selected.clear();
-      $('log-select-all').checked = false;
       return recomputeLog();
     }
     state.selected.clear();
-    $('select-all').checked = false;
     renderer.setSelection(state.selected);
     updateBulkBar();
   });

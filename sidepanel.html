@@ -30,16 +30,31 @@
 
 <section class="filters">
   <div class="filter-bar">
+    <!-- "Following" at every width: it is the word the row chip already uses
+         for these same accounts, so it needs no explaining, and it costs a
+         third less bar than "Already follow" did. -->
     <label class="toggle-chip">
       <input type="checkbox" id="f-following">
-      <span>Already follow</span>
+      <span>Following</span>
     </label>
 
-    <label class="select-chip">
-      <span>Mutuals</span>
-      <select id="f-mutuals" title="&quot;none&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals.">
+    <label class="select-chip mutuals-chip">
+      <!-- Drops away narrow, leaving the value to speak for itself — hence the
+           aria-label below, which is the select's only name once this is gone.
+           It comes back at the default, where the value is "any" and says
+           nothing; the chevron stands in for the select's own, hidden there. -->
+      <span class="label-wide">Mutuals</span>
+      <svg class="chip-chevron chevron-standin" viewBox="0 0 10 6" width="9" height="6" aria-hidden="true" focusable="false">
+        <path d="M1 1.25 5 5l4-3.75" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      <!-- A select is as wide as its longest option whether or not that option
+           is chosen, so a spelled-out "none (loaded rows)" cost this chip ~60px
+           on every panel at every width. The caveat is not lost: the same text
+           is in the tooltip, and #enriched-warning states it in full whenever
+           the option is actually on. -->
+      <select id="f-mutuals" aria-label="Mutuals" title="&quot;none&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals.">
         <option value="0">any</option>
-        <option value="none">none (loaded rows)</option>
+        <option value="none">none</option>
         <option value="1">1+</option>
         <option value="5">5+</option>
         <option value="10">10+</option>
@@ -90,29 +105,27 @@
 </section>
 
 <section class="result-bar">
-  <label class="toggle-chip">
-    <input type="checkbox" id="select-all">
-    <span>Select all shown</span>
-  </label>
+  <!-- A button, not a checkbox: it performs an action rather than holding a
+       state, and its own label already says which way it will go. -->
+  <button id="select-all" type="button" class="chip-button">Select all</button>
   <span id="shown-count" class="muted"></span>
-  <label class="select-chip">
+
+  <!-- Names the control, not its value. The open menu marks the current option
+       itself, so repeating it on the chip only cost width. The native <select>
+       is kept and laid over the chip at zero opacity — the menu then opens
+       where and how the OS does it, rather than being reimplemented. -->
+  <label class="select-chip select-chip-menu">
     <span>Sort</span>
-    <select id="sort">
+    <svg class="chip-chevron" viewBox="0 0 10 6" width="9" height="6" aria-hidden="true" focusable="false">
+      <path d="M1 1.25 5 5l4-3.75" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+    </svg>
+    <select id="sort" aria-label="Sort order">
       <option value="default">Following, then mutuals</option>
       <option value="newest">Newest request</option>
       <option value="followers">Most followers</option>
     </select>
   </label>
 </section>
-
-<div id="hydration" class="hydration">
-  <div class="hydration-line">
-    <span id="hydration-label" title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front.">0 / 0 details loaded</span>
-    <button id="load-batch" class="btn btn-small" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
-    <button id="stop-hydration" class="btn btn-small btn-quiet" hidden>Stop</button>
-  </div>
-  <div class="progress"><div id="hydration-bar" class="progress-fill"></div></div>
-</div>
 
 <section class="log-controls">
   <div class="filter-bar">
@@ -132,16 +145,30 @@
 </section>
 
 <section class="result-bar result-bar-log">
-  <label class="toggle-chip">
-    <input type="checkbox" id="log-select-all">
-    <span>Select all shown</span>
-  </label>
+  <button id="log-select-all" type="button" class="chip-button">Select all</button>
   <span id="log-count" class="muted"></span>
 </section>
 
 <div id="status" class="status"></div>
 
 <main class="list-scroll">
+  <!-- Inside the scroller, not above it: this describes the list rather than
+       controlling the panel, and a narrow panel cannot afford a band that is
+       pinned open once you are past the first screen of rows. -->
+  <div id="hydration" class="hydration">
+    <div class="hydration-line">
+      <!-- A batch advances once every ~2s, so between ticks the counter alone
+           cannot distinguish "working" from "stalled". -->
+      <span id="hydration-spinner" class="spinner spinner-inline" hidden></span>
+      <span id="hydration-label" title="Details are follower and post counts, bio, and the exact mutual count. They need one request per person, so they load on demand rather than up front.">0 / 0 details loaded</span>
+      <!-- Links, not buttons: this row reports on the list and offers one
+           optional action, which does not warrant the weight of a control
+           surface above every screenful of rows. -->
+      <button id="load-batch" class="link-inline" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
+      <button id="stop-hydration" class="link-inline" hidden>Stop</button>
+    </div>
+  </div>
+
   <div id="list" class="list"></div>
   <div id="log-list" class="list"></div>
   <div id="log-empty" class="empty" hidden></div>

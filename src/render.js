@@ -191,10 +191,9 @@ export class ListRenderer {
       main.appendChild(el('div', 'row-mutuals', `with ${row.mutualNames.join(', ')}`));
     }
 
-    if (row.enriched && row.bio.trim()) {
-      main.appendChild(el('div', 'row-bio', row.bio.replace(/\s+/g, ' ').trim()));
-    }
-
+    // No bio line. One truncated clause of someone's profile text told you very
+    // little and cost a row's worth of height on every request. The bio is still
+    // fetched and cached — the "Empty bio" spam filter reads it.
     node.appendChild(main);
 
     return node;
