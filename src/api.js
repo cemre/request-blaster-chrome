@@ -68,9 +68,13 @@ async function waitForContentScript(id) {
     // content.js guards against running twice.
     if (attempt === 2) {
       try {
+        // Read from the manifest rather than hardcoding the list, so an
+        // optional content script (e.g. harvest-content.js) added or removed
+        // there is picked up here automatically instead of silently missed.
+        const files = chrome.runtime.getManifest().content_scripts?.[0]?.js || ['content.js', 'banner.js'];
         await chrome.scripting.executeScript({
           target: { tabId: id },
-          files: ['content.js', 'banner.js'],
+          files,
         });
         if (await pingOnce(id)) return true;
       } catch {
@@ -204,3 +208,4 @@ export async function fetchFollowStatuses(userIds, onChunk) {
 
   return statuses;
 }
+

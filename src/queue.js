@@ -17,7 +17,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export class ThrottledQueue {
   /**
    * @param items      work items
-   * @param handler    async (item, index) => { ok, blocked?, error? }
+   * @param handler    async (item, index) => { ok, blocked?, loggedOut?, error? }
    * @param pacing     { min, max } delay in ms between items
    * @param onProgress ({ done, total, item, result }) => void
    * @param onFinish   ({ done, total, halted, stopped, failures }) => void
@@ -56,14 +56,26 @@ export class ThrottledQueue {
       try {
         result = await this.handler(item, index);
       } catch (err) {
-        result = { ok: false, error: String(err) };
+        // Some handlers (e.g. harvest.js, via api.js's paginated fetchers)
+        // throw an ApiError instead of returning a `{ ok: false }` envelope.
+        // Duck-typed on `code` rather than importing ApiError from api.js so
+        // this generic queue — shared by writes, hydration, and harvest —
+        // stays dependency-free; any thrown error carrying the right code
+        // halts exactly like a returned envelope would, so no caller can
+        // route around the halt just by letting a call throw.
+        const code = err?.code;
+        result = code === 'blocked' || code === 'logged_out'
+          ? { ok: false, blocked: code === 'blocked', loggedOut: code === 'logged_out', error: err.message || String(err) }
+          : { ok: false, error: String(err) };
       }
 
       this.done += 1;
 
-      // A rate-limit or challenge response means stop entirely. Retrying into
-      // an action block is how a temporary throttle becomes a long one.
-      if (result && result.blocked) {
+      // A rate-limit, challenge, or logged-out response means stop entirely.
+      // Retrying into an action block is how a temporary throttle becomes a
+      // long one, and retrying while logged out just burns the rest of the
+      // queue as identical failures.
+      if (result && (result.blocked || result.loggedOut)) {
         this.halted = result.error || 'rate_limited';
         this.onProgress({ done: this.done, total: this.total, item, result });
         break;

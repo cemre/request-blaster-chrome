@@ -188,3 +188,4 @@ export async function clearLog() {
   if (keys.length > 0) await chrome.storage.local.remove(keys);
   return keys.length;
 }
+
