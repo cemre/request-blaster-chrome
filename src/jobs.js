@@ -59,13 +59,28 @@ export class JobList {
    * @param scope 'requests' | 'log' — which list those ids index
    * @param names optional `Map<id, username>`, for handlers that need more than
    *              an id and must not depend on the row still being on screen
+   * @param spec  optional `{ label, gerund }` naming the work. The panel's own
+   *              kinds are looked up in its ACTIONS table; a guest brings its
+   *              own, so this file's caller can queue work it has no entry for.
+   * @param run   optional `async (job) => outcome`, performing this job instead
+   *              of the caller's default handler. This is what lets a feature
+   *              outside the panel take a turn in the pipeline without the
+   *              pipeline learning what the feature is — see mountHarvest.
+   * @param onDrop optional `() => void`, called when this job leaves the list
+   *              *without having run*. A running job learns it was dropped
+   *              through `stop`, which ends it by the same path as finishing;
+   *              one still queued has been told nothing at all, and a guest
+   *              that put its own UI into a waiting state needs it back.
    */
-  enqueue({ kind, scope, ids, names = null }) {
+  enqueue({ kind, scope, ids, names = null, spec = null, run = null, onDrop = null }) {
     const job = {
       id: this.nextId,
       kind,
       scope,
       names,
+      spec,
+      run,
+      onDrop,
       // A Set rather than an index into `ids`, because what is left is the
       // question every other part of this file asks — the claim map reads it,
       // the counter derives from it, and a resumed job runs it.
@@ -134,8 +149,10 @@ export class JobList {
     const [job] = this.jobs.splice(index, 1);
     // A running job cannot be torn out from under its own queue, so it is asked
     // to stop instead. Its runJob promise resolves shortly after, and pump()
-    // finds it already gone from the list.
+    // finds it already gone from the list. One that never ran gets the only
+    // notice it will ever have that it is not going to.
     if (job.state === 'running') job.stop?.();
+    else job.onDrop?.();
     job.state = 'dropped';
 
     // Cancelling the halted job is the one way out of a pause that is not
@@ -165,6 +182,7 @@ export class JobList {
   cancelAll() {
     for (const job of this.jobs) {
       if (job.state === 'running') job.stop?.();
+      else job.onDrop?.();
       job.state = 'dropped';
     }
     // Emptying the list releases every claim at once; see drop() for why

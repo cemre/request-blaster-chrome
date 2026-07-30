@@ -191,7 +191,7 @@ async function refreshNotes(skipNotes, ids) {
   }
 }
 
-function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes, mask) {
+function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, mask) {
   function setHarvestStatus(message) {
     $('harvest-status').textContent = message;
   }
@@ -235,82 +235,104 @@ function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes,
         return;
       }
 
-      setHarvestStatus('Starting…');
-      log('starting; writing index.json first to prove the download path works');
-      activeHarvest = await runHarvest({
-        candidates,
-        onProgress: ({ done, total, item, result }) => {
-          // The status line keeps naming the account — the meter's label, below,
-          // has no room for a username once the counter is in it.
-          setHarvestStatus(`${done} / ${total} — @${mask().username(item.username)}`);
-          // Phrased like the action and hydration queues' own labels
-          // ("Rejecting 4 / 10…", "Enriching 40 / 100…") so the meter reads as
-          // one running thing regardless of which queue is behind it.
-          externalRun.update({ label: `Harvesting ${done} / ${total}…`, done, total });
-          markActiveLogRow(item.pk);
-
-          // Both ids: web_profile_info can resolve a username to a different
-          // account than the followers list gave, and the log row holds the
-          // one from the request that created it. Not awaited — this is a
-          // repaint, and the queue's pacing is not waiting on it.
-          refreshNotes(skipNotes, [item.pk, result?.pk]);
-        },
-        onFinish: ({ done, total, halted, stopped, failures, batchId, reviewableCounts }) => {
-          $('harvest-start').disabled = false;
-          activeHarvest = null;
-          // Cleared in the same statement that restores the rest of the idle
-          // UI: the meter reports an in-flight run, and there no longer is one.
-          externalRun.finish();
-          clearActiveLogRow();
-
-          // Once at the end regardless of what the per-account refresh above
-          // decided to skip: a backlog sweep marks a thousand accounts that had
-          // no log row at the time, and some of them will have one by the time
-          // the log is next opened.
-          loadHarvested()
-            .then((harvested) => skipNotes.set(harvestNotes(harvested)))
-            .catch((err) => logError('could not refresh the harvested marks:', err));
-
-          // A count of failures, always — reporting a bare "Done" while every
-          // account silently failed is how a broken run passes for a good one.
-          const failed = failures?.length ?? 0;
-          const failedNote = failed ? ` ${failed} failed.` : '';
-
-          // Most of a real backlog has no grid to fetch, so say what came back
-          // rather than only how many rows ran — "7 profile-only" is a result,
-          // and without naming it the batch reads as mostly-nothing.
-          const grid = reviewableCounts?.grid ?? 0;
-          const profileOnly = reviewableCounts?.['profile-only'] ?? 0;
-          const mix = grid || profileOnly
-            ? ` ${grid} with photos, ${profileOnly} profile-only.`
-            : '';
-
-          log('finished', { done, total, failed, batchId, reviewableCounts });
-          // The meter reported the in-flight run and just cleared; this line
-          // is what is left once it is gone, so it has to state the outcome
-          // in full rather than trail off the way the meter's own label could.
-          if (halted) setHarvestStatus(`Halted by Instagram after ${done}: ${halted}`);
-          else if (stopped) setHarvestStatus(`Stopped at ${done} / ${total}.${mix}${failedNote}`);
-          else setHarvestStatus(`Done — batch ${batchId}.${mix}${failedNote}`);
-        },
-      });
-      // Registered so the meter's own Stop — now the only Stop this feature
-      // has — can reach this run; seeded at 0/total for the same reason the
-      // action and hydration queues seed themselves before their first tick,
-      // rather than leaving the meter closed for the whole of a slow first item.
+      // Queued rather than started. A harvest is thousands of requests, and it
+      // used to go out over the top of whatever the panel was already doing —
+      // which is the one thing PACING exists to prevent. Taking a turn in the
+      // pipeline costs nothing here: this is a background job whose own unit of
+      // time is hours, so waiting out four minutes of rejecting is free.
       //
-      // The ids are what this run captured. The panel marks those log rows as
-      // spoken for and leaves the rest of the log alone — this used to freeze
-      // the whole list, on the argument that a queue holds the rows it started
-      // with, which is true of these rows and of no others. Most of an
-      // all-followers sweep matches no log row at all; those ids simply claim
-      // nothing.
-      externalRun.start(activeHarvest.queue, {
-        label: `Harvesting 0 / ${candidates.length}…`,
-        done: 0,
-        total: candidates.length,
-      }, candidates.map((candidate) => candidate.pk));
-      log('running. batch', activeHarvest?.batchId);
+      // The ids are what this run captured, and the panel marks those log rows
+      // as spoken for while it waits and while it runs. Most of an all-followers
+      // sweep matches no log row at all; those ids simply claim nothing.
+      setHarvestStatus(`${candidates.length} queued.`);
+      log(`queued ${candidates.length}; waiting for the pipeline`);
+      queueRun({
+        ids: candidates.map((candidate) => candidate.pk),
+        spec: { label: 'Harvest', gerund: 'Harvesting' },
+        // Cancelled from its bar before its turn came. Nothing ran, so nothing
+        // will call onFinish, and the button this handler disabled on the way in
+        // would stay dead for the rest of the session.
+        onDrop: () => {
+          log('cancelled before it ran');
+          activeHarvest = null;
+          $('harvest-start').disabled = false;
+          setHarvestStatus(IDLE_STATUS);
+        },
+        run: ({ handled, setStop }) => new Promise((resolve) => {
+          setHarvestStatus('Starting…');
+          log('starting; writing index.json first to prove the download path works');
+
+          runHarvest({
+            candidates,
+            onProgress: ({ done, total, item, result }) => {
+              // The status line keeps naming the account — the bar's label has
+              // no room for a username once the counter is in it.
+              setHarvestStatus(`${done} / ${total} — @${mask().username(item.username)}`);
+              // What the bar counts. It reads `total - remaining` off the job,
+              // so this is the progress tick as well as the row release — there
+              // is no second copy of the number to keep in step with this one.
+              handled(item.pk);
+              markActiveLogRow(item.pk);
+
+              // Both ids: web_profile_info can resolve a username to a different
+              // account than the followers list gave, and the log row holds the
+              // one from the request that created it. Not awaited — this is a
+              // repaint, and the queue's pacing is not waiting on it.
+              refreshNotes(skipNotes, [item.pk, result?.pk]);
+            },
+            onFinish: ({ done, total, halted, stopped, failures, batchId, reviewableCounts }) => {
+              $('harvest-start').disabled = false;
+              activeHarvest = null;
+              clearActiveLogRow();
+
+              // Once at the end regardless of what the per-account refresh above
+              // decided to skip: a backlog sweep marks a thousand accounts that
+              // had no log row at the time, and some of them will have one by
+              // the time the log is next opened.
+              loadHarvested()
+                .then((harvested) => skipNotes.set(harvestNotes(harvested)))
+                .catch((err) => logError('could not refresh the harvested marks:', err));
+
+              // A count of failures, always — reporting a bare "Done" while
+              // every account silently failed is how a broken run passes for a
+              // good one.
+              const failed = failures?.length ?? 0;
+              const failedNote = failed ? ` ${failed} failed.` : '';
+
+              // Most of a real backlog has no grid to fetch, so say what came
+              // back rather than only how many rows ran — "7 profile-only" is a
+              // result, and without naming it the batch reads as mostly-nothing.
+              const grid = reviewableCounts?.grid ?? 0;
+              const profileOnly = reviewableCounts?.['profile-only'] ?? 0;
+              const mix = grid || profileOnly
+                ? ` ${grid} with photos, ${profileOnly} profile-only.`
+                : '';
+
+              log('finished', { done, total, failed, batchId, reviewableCounts });
+              // The bar reported the in-flight run and is about to go; this line
+              // is what is left once it has, so it states the outcome in full
+              // rather than trailing off the way the bar's own label could.
+              if (halted) setHarvestStatus(`Halted by Instagram after ${done}: ${halted}`);
+              else if (stopped) setHarvestStatus(`Stopped at ${done} / ${total}.${mix}${failedNote}`);
+              else setHarvestStatus(`Done — batch ${batchId}.${mix}${failedNote}`);
+
+              // The envelope the pipeline reads: a halt here pauses everything
+              // behind this job, exactly as it would from a write.
+              resolve({ halted, stopped, failures });
+            },
+          }).then((harvest) => {
+            activeHarvest = harvest;
+            // Registered so the bar's Stop can reach this run.
+            setStop(() => harvest.queue.stop());
+            log('running. batch', harvest?.batchId);
+          }).catch((err) => {
+            logError('failed:', err);
+            setHarvestStatus(`Failed: ${err.message}`);
+            $('harvest-start').disabled = false;
+            resolve({ failures: [{ error: String(err) }] });
+          });
+        }),
+      });
     } catch (err) {
       logError('failed:', err);
       setHarvestStatus(`Failed: ${err.message}`);
@@ -379,16 +401,19 @@ function bindLifecycle() {
  * @param confirmAction the panel's in-document dialog. Passed in for the same
  *   reason, and required: window.confirm is silently suppressed in a side
  *   panel, so there is no usable fallback to default to.
- * @param externalRun `{ start(queue, progress, ids), update(progress), finish() }`
- *   folding this run into the panel's shared toolbar meter. Optional and
- *   defaulted to a no-op below, so this feature still mounts — with its own
- *   status line and no shared meter or Stop — if a caller does not supply one.
- * @param skipNotes `{ set(byId) }`, where `byId` is `{ [userId]: note }`. What
- *   this feature tells the log about accounts it has already written to a
- *   batch: the row shows the note and select-all leaves it alone. Optional and
- *   defaulted like externalRun — without it the marks are simply invisible,
- *   and the "All followers" sweep still skips them, since that has always been
- *   decided from storage rather than from the panel.
+ * @param queueRun `({ ids, spec, run, onDrop }) => job` — puts this run in the
+ *   panel's pipeline and calls `run` when its turn comes. A harvest is thousands
+ *   of requests and used to go out over the top of whatever else was running,
+ *   which is the one thing the panel's pacing exists to prevent. Optional, and
+ *   defaulted below to a runner that starts immediately: without a pipeline to
+ *   join there is nothing to wait for, and the feature still works standalone.
+ * @param skipNotes `{ set(byId) }`, where `byId` is `{ [userId]: { label, date } }`.
+ *   What this feature tells the log about accounts it has already written to a
+ *   batch: the label takes the row's action chip, the date goes in its tooltip,
+ *   and select-all leaves the row alone. Optional and defaulted like queueRun —
+ *   without it the marks are simply invisible, and the "All followers" sweep
+ *   still skips them, since that has always been decided from storage rather
+ *   than from the panel.
  */
 export function mountHarvest({
   selectedLogEntries = () => [],
@@ -396,7 +421,7 @@ export function mountHarvest({
     logError('no confirmAction was provided — refusing to start a harvest that cannot be confirmed');
     return false;
   },
-  externalRun = { start() {}, update() {}, finish() {} },
+  queueRun = ({ run }) => run({ handled() {}, setStop() {} }),
   skipNotes = { set() {} },
   // The panel's naming mask, as a getter — the status line below names the
   // account being worked, and screenshot mode can be toggled mid-run.
@@ -428,7 +453,7 @@ export function mountHarvest({
     .catch((err) => logError('could not load the harvested marks:', err));
 
   try {
-    bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes, mask);
+    bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, mask);
     bindLifecycle();
   } catch (err) {
     // A throw here leaves a button on screen wired to nothing, which is the

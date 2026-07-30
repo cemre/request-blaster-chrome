@@ -199,17 +199,27 @@ progress, have a Stop button, and **halt entirely** on the first `429` or
 Every bulk action asks for confirmation naming the exact count; rejection is
 additionally flagged as not undoable.
 
-A run dims and freezes the list it is working through, because it holds the ids
-it captured when it started and a selection it will not honour should not look
-like one. It freezes **only** that list. An accept run takes the requests list
-and leaves the Log tab alone, so a harvest — which reads, and is the obvious
-thing to line up while ten minutes of accepting goes by — can still be given
-rows to work on. Hydration freezes nothing at all.
+Every operation — accept, reject, follow back, and the harvest — is a job in one
+list that runs them **one at a time**. Nothing here is concurrent, and that is
+the safety property rather than a simplification: the pace above was chosen to
+sit under a limit Instagram does not publish, and a second queue running over
+the top of the first doubles it.
 
-Two writes cannot run at once, so **Follow back** stays unavailable until an
-accept run finishes. A read can: only one of the two shares the toolbar meter,
-and the action queue takes it, so a harvest running behind one reports on its
-own line in the Log tab and keeps a Stop button there until the meter is free.
+The harvest is in that list even though it only reads. What the limit governs is
+how fast the extension talks to Instagram at all, and a harvest is thousands of
+requests — so it takes its turn like anything else. That costs nothing: a
+harvest's own unit of time is hours, so waiting out four minutes of rejecting is
+free, and queueing one is the obvious thing to do *while* a run is going rather
+than something to remember afterwards.
+
+Only the rows a job is holding go inert. Everything else stays live, so the next
+selection can be built and queued while the first is still running. Hydration
+claims nothing and queues behind nothing — it changes nothing on Instagram's
+side and is bounded by what is on screen.
+
+The toolbar is a stack: the running job keeps the meter and a Stop, and each
+queued one gets a line and a Cancel. Cancelling a harvest that has not started
+yet costs nothing, because it has not fetched anything yet.
 
 ## The 200 cap
 

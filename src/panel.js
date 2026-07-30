@@ -47,11 +47,13 @@ const ACTIONS = {
 };
 
 /**
- * The harvest's bar in the run stack. It is not a job — it only reads, so it runs
- * alongside the write pipeline rather than in it — but it reports in the same
- * stack and needs an id there that no job will ever take.
+ * What a job calls the work it is doing.
+ *
+ * The panel's own kinds are in ACTIONS. A guest job — one a feature outside this
+ * file queued through `guestRun` — brings its own, which is the whole of what
+ * this file has to know about it.
  */
-const EXTERNAL_BAR_ID = 0;
+const jobSpec = (job) => job.spec || ACTIONS[job.kind];
 
 const BULK_BUTTONS = {
   'bulk-accept': 'approve',
@@ -92,13 +94,6 @@ const state = {
   // label can stand aside: actOnce already puts "Accepting…" on that row, and a
   // claim repaint must not overwrite it with what is merely coming.
   inFlightId: null,
-
-  // A run owned by a feature outside this file, handed in as a controller
-  // through mountHarvest's options (see externalRun below). Named for what it
-  // is, not for whichever feature currently happens to be the only one using
-  // it, so this file never has to learn a second name the day another feature
-  // wants the same seam. `{ queue, label, done, total, ids }`.
-  external: null,
 
   // Hydration's own progress, which reports to the header slot and nowhere else.
   // It carries no label because it has only one gerund, spelled in the markup so
@@ -419,14 +414,15 @@ function updateBulkBar() {
 const pct = (done, total) => (total > 0 ? Math.round((done / total) * 100) : 0);
 
 /**
- * One bar per thing worth reporting, newest last.
+ * One bar per job, in the order they will run.
  *
- * The jobs first and the harvest under them: the jobs are the writes, and the
- * harvest can run for hours without ever being the thing you are waiting on.
+ * The harvest is in here like anything else now. It used to be appended after
+ * the jobs as a bar of its own, because it ran alongside the pipeline rather
+ * than in it; queueing it removed both the special case and the bar.
  */
 function runBars() {
-  const bars = jobs.jobs.map((job) => {
-    const spec = ACTIONS[job.kind];
+  return jobs.jobs.map((job) => {
+    const spec = jobSpec(job);
     const done = jobs.done(job);
 
     // A queued job counts nothing yet, so it names the work instead — "Reject 24"
@@ -440,17 +436,6 @@ function runBars() {
 
     return { id: job.id, state: job.state, label, pct: pct(done, job.total) };
   });
-
-  if (state.external) {
-    bars.push({
-      id: EXTERNAL_BAR_ID,
-      state: 'running',
-      label: state.external.label,
-      pct: pct(state.external.done, state.external.total),
-    });
-  }
-
-  return bars;
 }
 
 /**
@@ -490,8 +475,7 @@ function syncRunStack() {
  */
 function claimLabel(job, id) {
   if (id === state.inFlightId) return null;
-  const spec = ACTIONS[job.kind];
-  return `${job.state === 'paused' ? 'Paused' : 'Queued'} · ${spec.label}`;
+  return `${job.state === 'paused' ? 'Paused' : 'Queued'} · ${jobSpec(job).label}`;
 }
 
 /**
@@ -512,53 +496,78 @@ function syncClaims() {
     (job.scope === 'log' ? log : requests).set(id, claimLabel(job, id));
   }
 
-  // The harvest is not in the pipeline — it only reads, so it runs alongside —
-  // but a log row it captured at start is just as spoken for, and for the reason
-  // the old freeze gave: changing the selection under it changes nothing about
-  // what is actually running.
-  for (const id of state.external?.ids || []) {
-    if (!log.has(id)) log.set(id, 'Queued · Harvest');
-  }
-
   state.claims = { requests, log };
   renderer.setClaims(requests);
   if (state.mode === 'log') recomputeLog();
 }
 
 /**
- * The seam an external feature drives its own run through — handed to
- * mountHarvest as `externalRun`, but named for the role rather than the
- * feature, since nothing here needs to know which feature is holding it.
+ * The seam a feature outside this file takes a turn in the pipeline through —
+ * handed to mountHarvest, but named for the role rather than the feature, since
+ * nothing here needs to know which feature is holding it.
  *
- * `start` seeds the bar before the caller's own first tick, the way every queue
- * here seeds itself rather than leaving a meter closed through a slow first
- * item; `update` is a plain progress tick; `finish` clears state in the one
- * statement that also releases the rows.
+ * It used to be `externalRun`, a parallel path with its own bar, its own claim
+ * list and its own progress ticks, because the harvest only reads and so was let
+ * run alongside the writes. That was the wrong reading of why the pipeline is
+ * serial. The rate limit is not a rule about writes; it is a rule about how fast
+ * this extension talks to Instagram at all, and a harvest is thousands of
+ * requests. Running one over the top of an accept run doubled exactly the rate
+ * PACING was chosen to stay under.
  *
- * `ids` is what the run captured. Optional — a caller that passes none simply
- * claims nothing, and its rows stay live.
+ * So a guest is a job. Everything the parallel path reimplemented — the bar, the
+ * counter, the claims, Stop, the halt — it now gets by being in the list, and
+ * `state.external` is gone.
+ *
+ * @param ids   what this run will act on; they become the job's claims and its
+ *              denominator, so the guest reports progress just by handling them
+ * @param spec  `{ label, gerund }`, since a guest has no entry in ACTIONS
+ * @param run   `async ({ handled, setStop }) => outcome`, called when its turn
+ *              comes. `handled(id)` advances the count and frees that row;
+ *              `setStop(fn)` is how the bar's Stop reaches it. The outcome is
+ *              the queue's own envelope — `{ halted, stopped, failures }`.
+ * @param onDrop called instead of `run` if the job is cancelled while still
+ *              waiting. Without it a guest that disabled a button on the way in
+ *              would never get the news that its turn is not coming.
  */
-const externalRun = {
-  start(queue, progress, ids = []) {
-    state.external = { queue, ...progress, ids: ids.map(String) };
-    syncRunStack();
-    syncClaims();
-  },
-  update(progress) {
-    if (state.external) state.external = { ...state.external, ...progress };
-    syncRunStack();
-  },
-  finish() {
-    state.external = null;
-    syncRunStack();
-    syncClaims();
+const guestRun = {
+  enqueue({ ids, spec, run, onDrop }) {
+    // Out of the selection and onto the job, exactly as enqueueBulk and
+    // enqueueFollowBack do it. Queueing *is* that move: the bulk bar empties,
+    // select-all stops counting rows that are now somebody else's, and the next
+    // selection can be built straight away. Left in, the rows would stay ticked
+    // and disabled — uncountable and un-untickable — and pressing Harvest again
+    // after the batch finished would silently redo the same accounts.
+    //
+    // Ids that were never log rows, which is most of an all-followers sweep,
+    // simply are not in the set.
+    for (const id of ids) state.log.selected.delete(String(id));
+    if (state.mode === 'log') recomputeLog();
+
+    return jobs.enqueue({
+      kind: 'guest',
+      // The harvest's ids are log rows. A guest that acted on the requests list
+      // would pass its own scope; there is no such guest yet, so rather than
+      // invent a parameter for it this stays where the one caller needs it.
+      scope: 'log',
+      ids: ids.map(String),
+      spec,
+      run: (job) => run({
+        handled: (id) => {
+          jobs.handled(job, String(id));
+          syncRunStack();
+          syncClaims();
+        },
+        setStop: (fn) => { job.stop = fn; },
+      }),
+      onDrop,
+    });
   },
 };
 
 /**
  * Rows another feature has already handled, as `{ [userId]: { label, date } }`.
  *
- * The counterpart to externalRun, and named for the role rather than the
+ * The counterpart to guestRun, and named for the role rather than the
  * feature for the same reason: the panel prints the label on the row's action
  * chip and the date in its tooltip, stops select-all ticking those rows, and
  * never learns what either value means. Handed to mountHarvest, which pushes
@@ -1167,6 +1176,17 @@ function runJob(job) {
   // pause, this run only exists because it was resumed.
   hideBanner();
 
+  // A guest brought its own way of doing the work; this file's part was getting
+  // it to the front of the list. It reports through the same outcome envelope,
+  // so a guest that gets rate limited pauses the pipeline like any other job.
+  if (job.run) {
+    return Promise.resolve(job.run(job)).then((outcome) => {
+      job.stop = null;
+      reportOutcome(job, outcome || {});
+      return outcome || {};
+    });
+  }
+
   return new Promise((resolve) => {
     const queue = new ThrottledQueue({
       // A resumed job starts from what it still holds, not from what it was
@@ -1221,6 +1241,14 @@ function reportOutcome(job, { halted, stopped, failures = [] }) {
       `Paused after ${done} of ${job.total} — Instagram returned "${halted}". Wait a while, then resume.`,
       { paused: true }
     );
+  } else if (job.run) {
+    // Every other branch below writes to the panel's status line, and a guest
+    // has already written its own — a fuller one, since it knows what its work
+    // produced and this only knows how many items went by. The halt above is
+    // the exception it does not own: pausing the pipeline is this file's to
+    // report, because what it stops is every job behind it too.
+    recomputeLog();
+    return;
   } else if (stopped) {
     setStatus(`Stopped after ${done} of ${job.total}.`);
   } else if (failures.length) {
@@ -1530,11 +1558,9 @@ function bind() {
     container: $('run-stack'),
     // One button per bar, and which one it is follows from that bar's state —
     // Stop on the running or paused job, Cancel on one still waiting. Both mean
-    // the same thing to the list: drop it and let its rows go.
-    onButton: (id) => {
-      if (id === EXTERNAL_BAR_ID) return state.external?.queue?.stop();
-      jobs.drop(id);
-    },
+    // the same thing to the list: drop it and let its rows go. Every bar is a
+    // job now, including the harvest's, so there is no longer a second case.
+    onButton: (id) => jobs.drop(id),
   });
 
   renderer = new ListRenderer({
@@ -1699,10 +1725,11 @@ function bind() {
 
   // #region harvest — build.js deletes this region from the store package
   // Deleting this call plus src/harvest/ removes the harvest feature entirely.
-  // It reads the log selection through a closure and drives the meter through
-  // externalRun rather than importing panel state, so nothing here depends on
-  // the feature existing — mountHarvest defaults externalRun to a no-op if a
-  // future caller omits it, so this call is not load-bearing either.
+  // It reads the log selection through a closure and takes its turn in the
+  // pipeline through guestRun rather than importing panel state, so nothing here
+  // depends on the feature existing — mountHarvest defaults guestRun to running
+  // straight away if a future caller omits it, so this call is not load-bearing
+  // either.
   //
   // That removal is what the store build does: `npm run build` strips both
   // #region harvest blocks in this file, so the published package can ship
@@ -1711,7 +1738,7 @@ function bind() {
     selectedLogEntries: () =>
       state.log.visible.filter((record) => state.log.selected.has(record.userId)),
     confirmAction,
-    externalRun,
+    queueRun: (options) => guestRun.enqueue(options),
     skipNotes,
     // A getter, not the mask itself: the status line is written during a run,
     // and the mode can be toggled while one is in flight.

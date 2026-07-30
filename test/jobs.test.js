@@ -279,3 +279,161 @@ test('the denominator does not move as rows are handled', async () => {
   assert.equal(job.total, 3);
   assert.equal(list.done(job), 2);
 });
+
+// ------------------------------------------------------------- guest jobs
+
+/**
+ * A guest brings its own runner, so it needs a harness whose runJob honours it.
+ * That is exactly what panel.js's own runJob does for `job.run`.
+ */
+function guestHarness() {
+  let settle;
+  const list = new JobList({
+    runJob: (job) => {
+      if (job.run) return job.run(job);
+      return new Promise((resolve) => { settle = resolve; });
+    },
+  });
+  return {
+    list,
+    async finish(outcome = {}) {
+      settle(outcome);
+      await Promise.resolve();
+      await Promise.resolve();
+    },
+  };
+}
+
+test('a guest job waits its turn behind a write', async () => {
+  const { list, finish } = guestHarness();
+  let harvestStarted = false;
+
+  list.enqueue({ kind: 'ignore', scope: 'requests', ids: ['a'] });
+  const guest = list.enqueue({
+    kind: 'guest',
+    scope: 'log',
+    ids: ['1', '2'],
+    spec: { label: 'Harvest', gerund: 'Harvesting' },
+    run: () => { harvestStarted = true; return Promise.resolve({}); },
+  });
+
+  await Promise.resolve();
+
+  // This is the whole point: the harvest is thousands of requests and it does
+  // not make a single one of them while a write is in flight.
+  assert.equal(harvestStarted, false);
+  assert.equal(guest.state, 'queued');
+
+  await finish({});
+  assert.equal(harvestStarted, true);
+});
+
+test('a guest claims its rows while it is still waiting', async () => {
+  const { list } = guestHarness();
+
+  list.enqueue({ kind: 'ignore', scope: 'requests', ids: ['a'] });
+  list.enqueue({
+    kind: 'guest', scope: 'log', ids: ['1', '2'],
+    spec: { label: 'Harvest', gerund: 'Harvesting' },
+    run: () => new Promise(() => {}),
+  });
+
+  await Promise.resolve();
+
+  // Queued is as spoken for as running: those rows are going to be harvested,
+  // and ticking them for a second harvest in the meantime means doing it twice.
+  const claims = list.claims();
+  assert.equal(claims.get('1').spec.label, 'Harvest');
+  assert.equal(claims.get('2').spec.label, 'Harvest');
+});
+
+test('a guest that halts pauses the pipeline behind it', async () => {
+  const { list } = guestHarness();
+
+  const guest = list.enqueue({
+    kind: 'guest', scope: 'log', ids: ['1'],
+    spec: { label: 'Harvest', gerund: 'Harvesting' },
+    run: () => Promise.resolve({ halted: 'challenge_required' }),
+  });
+  list.enqueue({ kind: 'ignore', scope: 'requests', ids: ['a'] });
+
+  await Promise.resolve();
+  await Promise.resolve();
+
+  // A read getting rate limited is the same warning as a write getting one, and
+  // draining the queue into the same block is what the pause exists to stop.
+  assert.equal(list.paused, 'challenge_required');
+  assert.equal(list.head, guest);
+});
+
+test('a guest cancelled before its turn is told, so it can undo its own UI', async () => {
+  const { list, finish } = guestHarness();
+  let dropped = false;
+  let ran = false;
+
+  list.enqueue({ kind: 'ignore', scope: 'requests', ids: ['a'] });
+  const guest = list.enqueue({
+    kind: 'guest', scope: 'log', ids: ['1'],
+    spec: { label: 'Harvest', gerund: 'Harvesting' },
+    run: () => { ran = true; return Promise.resolve({}); },
+    onDrop: () => { dropped = true; },
+  });
+
+  await Promise.resolve();
+  list.drop(guest.id);
+
+  assert.equal(dropped, true);
+  assert.equal(ran, false);
+  assert.equal(list.claims().size, 1); // the write's row, not the guest's
+
+  // And the write behind it carries on untouched.
+  await finish({});
+  assert.equal(list.busy, false);
+});
+
+test('a running guest is stopped rather than told it was dropped', async () => {
+  const { list } = guestHarness();
+  let dropped = false;
+  let stopped = false;
+
+  const guest = list.enqueue({
+    kind: 'guest', scope: 'log', ids: ['1'],
+    spec: { label: 'Harvest', gerund: 'Harvesting' },
+    run: ({ setStop } = {}) => new Promise(() => {}),
+    onDrop: () => { dropped = true; },
+  });
+  await Promise.resolve();
+  guest.stop = () => { stopped = true; };
+
+  list.drop(guest.id);
+
+  // It ends by the path it already has — its queue stops, its onFinish fires.
+  // onDrop would be a second ending for the same event.
+  assert.equal(stopped, true);
+  assert.equal(dropped, false);
+});
+
+test('cancelAll tells every waiting guest, not just the head', async () => {
+  const { list } = guestHarness();
+  const dropped = [];
+
+  list.enqueue({ kind: 'ignore', scope: 'requests', ids: ['a'] });
+  list.enqueue({
+    kind: 'guest', scope: 'log', ids: ['1'],
+    spec: { label: 'Harvest', gerund: 'Harvesting' },
+    run: () => Promise.resolve({}),
+    onDrop: () => dropped.push('first'),
+  });
+  list.enqueue({
+    kind: 'guest', scope: 'log', ids: ['2'],
+    spec: { label: 'Harvest', gerund: 'Harvesting' },
+    run: () => Promise.resolve({}),
+    onDrop: () => dropped.push('second'),
+  });
+
+  await Promise.resolve();
+  list.cancelAll();
+
+  assert.deepEqual(dropped, ['first', 'second']);
+  assert.equal(list.busy, false);
+});
