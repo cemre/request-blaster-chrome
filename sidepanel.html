@@ -91,22 +91,23 @@
            caveat is not lost: the same text is in the tooltip, and
            #enriched-warning states it in full whenever the option is on.
 
-           The comparison lives in the value ("<5", ">10", "1+") so the option
-           and what it does cannot drift apart: readFilters reads the sign off
-           the value rather than keeping a second table of its own. The signs
-           are strict, exactly as written; "1+" is the one inclusive step, and
-           is there because "anyone with a mutual at all" is the question the
-           bottom of this menu gets asked. -->
+           The comparison lives in the value ("<5", "10+") so the option and
+           what it does cannot drift apart: readFilters reads the form off the
+           value rather than keeping a second table of its own. Ceilings are
+           strict and floors are inclusive, exactly as written, which also
+           makes the two halves meet: "<5" and "5+" divide the rows in two
+           with no count falling between them, where "<5" against "> 5" used
+           to drop anyone with exactly five. -->
       <select id="f-mutuals" aria-label="Mutuals" title="&quot;0&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals. The ranges also skip rows whose count is still unknown.">
         <option value="any">any</option>
         <option value="0">0</option>
         <option value="&lt;5">&lt; 5</option>
         <option value="&lt;10">&lt; 10</option>
         <option value="1+">1+</option>
-        <option value="&gt;5">&gt; 5</option>
-        <option value="&gt;10">&gt; 10</option>
-        <option value="&gt;50">&gt; 50</option>
-        <option value="&gt;100">&gt; 100</option>
+        <option value="5+">5+</option>
+        <option value="10+">10+</option>
+        <option value="50+">50+</option>
+        <option value="100+">100+</option>
       </select>
     </label>
 

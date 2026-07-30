@@ -1122,20 +1122,19 @@ function confirmAction({ title, body, warn }) {
  * The mutuals menu, in the model's terms.
  *
  * Its values carry the comparison each option is labelled with, in the two
- * forms the menu uses: "<5" and ">10" are strict and step in by one to reach
- * the inclusive bounds applyFilters works in, while "1+" already is one. "0"
- * is not a bound at all but its own predicate, and an enriched-only one: an
+ * forms the menu uses: "<10" is strict and steps in by one to reach the
+ * inclusive bounds applyFilters works in, while "10+" already is one. "0" is
+ * not a bound at all but its own predicate, and an enriched-only one: an
  * absent social_context is not evidence of zero.
  */
 function readMutualsFilter(value) {
-  const strict = /^([<>])(\d+)$/.exec(value);
+  const under = /^<(\d+)$/.exec(value);
   const atLeast = /^(\d+)\+$/.exec(value);
 
   let minMutuals = 0;
   let maxMutuals = null;
   if (atLeast) minMutuals = Number(atLeast[1]);
-  else if (strict?.[1] === '>') minMutuals = Number(strict[2]) + 1;
-  else if (strict?.[1] === '<') maxMutuals = Number(strict[2]) - 1;
+  else if (under) maxMutuals = Number(under[1]) - 1;
 
   return { minMutuals, maxMutuals, noMutuals: value === '0' };
 }
