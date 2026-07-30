@@ -1201,7 +1201,7 @@ body.is-anon .avatar {
   .icon-toggle { width: 26px; }
 
   /* The widest thing in a bar is a word naming a control whose value is right
-     beside it. Drop the word and the value carries the chip: "1+", "none".
+     beside it. Drop the word and the value carries the chip: "> 5", "0".
      display, not visibility — this must also leave the accessibility tree, and
      the select's aria-label is what names it from here on.
 
@@ -1217,12 +1217,12 @@ body.is-anon .avatar {
      There the chip goes back to naming the control and hides the select behind
      it — the same overlay .select-chip-menu uses, so the popup stays native.
      option:checked tracks the live selection, so this flips as it is used. */
-  .mutuals-chip:has(option[value='0']:checked) { position: relative; }
+  .mutuals-chip:has(option[value='any']:checked) { position: relative; }
 
-  .mutuals-chip:has(option[value='0']:checked) .label-wide,
-  .mutuals-chip:has(option[value='0']:checked) .chevron-standin { display: block; }
+  .mutuals-chip:has(option[value='any']:checked) .label-wide,
+  .mutuals-chip:has(option[value='any']:checked) .chevron-standin { display: block; }
 
-  .mutuals-chip:has(option[value='0']:checked) select {
+  .mutuals-chip:has(option[value='any']:checked) select {
     position: absolute;
     inset: 0;
     width: 100%;

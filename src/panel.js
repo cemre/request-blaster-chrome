@@ -216,8 +216,8 @@ function recompute() {
       : `${unenriched} request${plural} not yet enriched and therefore hidden by these filters.`;
     warning.hidden = false;
   } else if (unknownMutuals > 0) {
-    // A minimum threshold is not enriched-only — the free estimate still
-    // filters — so only the rows Instagram said nothing about get held back.
+    // Neither bound is enriched-only — the free estimate still filters — so
+    // only the rows Instagram said nothing about get held back.
     warning.textContent = `${unknownMutuals} request${unknownMutuals === 1 ? '' : 's'} hidden: Instagram did not report a mutual count for them. Load their details to check.`;
     warning.hidden = false;
   } else {
@@ -268,7 +268,7 @@ function updateEmptyState(live) {
  */
 function resetFilters() {
   $('f-following').checked = false;
-  $('f-mutuals').value = '0';
+  $('f-mutuals').value = 'any';
   $('f-max-followers').value = '';
   for (const id of ['f-zero-posts', 'f-empty-bio', 'f-default-pic', 'f-bot-ratio']) {
     $(id).checked = false;
@@ -1118,15 +1118,33 @@ function confirmAction({ title, body, warn }) {
 
 // ------------------------------------------------------------------ binding
 
+/**
+ * The mutuals menu, in the model's terms.
+ *
+ * Its values carry the comparison each option is labelled with, in the two
+ * forms the menu uses: "<5" and ">10" are strict and step in by one to reach
+ * the inclusive bounds applyFilters works in, while "1+" already is one. "0"
+ * is not a bound at all but its own predicate, and an enriched-only one: an
+ * absent social_context is not evidence of zero.
+ */
+function readMutualsFilter(value) {
+  const strict = /^([<>])(\d+)$/.exec(value);
+  const atLeast = /^(\d+)\+$/.exec(value);
+
+  let minMutuals = 0;
+  let maxMutuals = null;
+  if (atLeast) minMutuals = Number(atLeast[1]);
+  else if (strict?.[1] === '>') minMutuals = Number(strict[2]) + 1;
+  else if (strict?.[1] === '<') maxMutuals = Number(strict[2]) - 1;
+
+  return { minMutuals, maxMutuals, noMutuals: value === '0' };
+}
+
 function readFilters() {
   const rawMax = $('f-max-followers').value;
-  // "none" is its own predicate rather than a minimum, and is enriched-only:
-  // an absent social_context is not evidence of zero mutuals.
-  const mutuals = $('f-mutuals').value;
   state.filters = {
     onlyFollowing: $('f-following').checked,
-    minMutuals: mutuals === 'none' ? 0 : Number(mutuals),
-    noMutuals: mutuals === 'none',
+    ...readMutualsFilter($('f-mutuals').value),
     maxFollowers: rawMax === '' ? null : Number(rawMax),
     zeroPosts: $('f-zero-posts').checked,
     emptyBio: $('f-empty-bio').checked,

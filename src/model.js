@@ -131,9 +131,15 @@ export function mergeRows(pendingUsers, friendshipStatuses = {}, profileCache = 
   });
 }
 
+// `minMutuals` and `maxMutuals` are both inclusive bounds, and the panel's
+// menu speaks in exclusive ones — "> 5" arrives here as a minimum of 6, "< 5"
+// as a maximum of 4. Off is 0 for the floor and null for the ceiling, because
+// a ceiling of 0 is a real request ("nobody at all") rather than an absence of
+// one, unlike a floor of 0.
 export const DEFAULT_FILTERS = {
   onlyFollowing: false,
   minMutuals: 0,
+  maxMutuals: null,
   noMutuals: false,
   maxFollowers: null,
   zeroPosts: false,
@@ -159,6 +165,8 @@ export const DEFAULT_FILTERS = {
 // with the pending list, so that filter works on every row for free.
 const ENRICHED_ONLY_FILTERS = ['maxFollowers', 'zeroPosts', 'emptyBio', 'botRatio', 'noMutuals'];
 
+const hasCeiling = (filters) => filters.maxMutuals !== null && filters.maxMutuals !== undefined;
+
 export function usesEnrichedFilters(filters) {
   return ENRICHED_ONLY_FILTERS.some((key) => {
     const value = filters[key];
@@ -177,7 +185,7 @@ export function usesEnrichedFilters(filters) {
  */
 export function filtersActive(filters) {
   if (filters.onlyFollowing || filters.defaultPic) return true;
-  if (filters.minMutuals > 0) return true;
+  if (filters.minMutuals > 0 || hasCeiling(filters)) return true;
   if (filters.search.trim() !== '') return true;
   return usesEnrichedFilters(filters);
 }
@@ -192,6 +200,10 @@ export function applyFilters(rows, filters) {
     // it can. Hidden rather than assumed innocent, and the panel says how many
     // went that way so the answer is "hydrate them", not "never see them".
     if (filters.minMutuals > 0 && (row.mutuals === null || row.mutuals < filters.minMutuals)) return false;
+    // Same rule under a ceiling, where the unfiltered null is worse: it reads
+    // as "hardly any mutuals", which is what this end of the menu is for
+    // rejecting on. Only a count we actually have may answer for a row.
+    if (hasCeiling(filters) && (row.mutuals === null || row.mutuals > filters.maxMutuals)) return false;
     if (filters.defaultPic && !row.defaultPic) return false;
 
     // `alias`/`aliasName` are only set while screenshot mode is on (see
@@ -220,15 +232,16 @@ export function applyFilters(rows, filters) {
 }
 
 /**
- * How many rows a mutuals threshold hid purely because their count is unknown.
+ * How many rows a mutuals bound hid purely because their count is unknown.
  *
  * Counted against the set that clears every *other* active filter, so the
  * number the panel shows is the number that would come back by hydrating —
  * not a tally of rows something else had already removed.
  */
 export function countHiddenByUnknownMutuals(rows, filters) {
-  if (!(filters.minMutuals > 0)) return 0;
-  return applyFilters(rows, { ...filters, minMutuals: 0 }).filter((row) => row.mutuals === null).length;
+  if (!(filters.minMutuals > 0) && !hasCeiling(filters)) return 0;
+  return applyFilters(rows, { ...filters, minMutuals: 0, maxMutuals: null })
+    .filter((row) => row.mutuals === null).length;
 }
 
 // An unknown count sits between a confirmed zero and a confirmed one: someone
