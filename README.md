@@ -18,7 +18,9 @@ actions live in a floating toolbar over the list.
 | **Reject** | `ignore` |
 
 Clicking anywhere in a row toggles its checkbox; the avatar, username and full
-name open that profile in the main tab instead.
+name open that profile in the main tab instead. **Shift-click** takes the range
+from the last row you clicked to this one, in either list and in either
+direction — rows with no checkbox are crossed rather than stopped at.
 
 Accept + follow is two writes per person against a rate limit that punishes
 writes, so it runs at roughly half the throughput of a plain accept — the
@@ -38,6 +40,12 @@ find someone you rejected by mistake.
 
 One line per action: timestamp, username, what you did. Grouped by day, newest
 first, with All / Accepted / Rejected filters and a username search.
+
+Once a harvest has written someone to a batch, that row says `Harvested 07/28`
+where it said `Accepted` — one line either way, since the panel is dragged
+narrow and a mark on a line of its own halves the log's density. The chip keeps
+the colour of the action it stands in front of, and hovering it gives back both
+the action's name and the date in full.
 
 To read it outside the UI, open the side panel's devtools console:
 
@@ -184,6 +192,18 @@ progress, have a Stop button, and **halt entirely** on the first `429` or
 
 Every bulk action asks for confirmation naming the exact count; rejection is
 additionally flagged as not undoable.
+
+A run dims and freezes the list it is working through, because it holds the ids
+it captured when it started and a selection it will not honour should not look
+like one. It freezes **only** that list. An accept run takes the requests list
+and leaves the Log tab alone, so a harvest — which reads, and is the obvious
+thing to line up while ten minutes of accepting goes by — can still be given
+rows to work on. Hydration freezes nothing at all.
+
+Two writes cannot run at once, so **Follow back** stays unavailable until an
+accept run finishes. A read can: only one of the two shares the toolbar meter,
+and the action queue takes it, so a harvest running behind one reports on its
+own line in the Log tab and keeps a Stop button there until the meter is free.
 
 ## The 200 cap
 

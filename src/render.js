@@ -5,7 +5,7 @@
 // textContent, never innerHTML — usernames and bios are attacker-controlled.
 
 import { ACTION_LABELS, groupByDay } from './history.js';
-import { formatCount, formatMutuals } from './model.js';
+import { formatCount, formatMutuals, rangeIds } from './model.js';
 import { PLACEHOLDER, resolveAvatar } from './avatars.js';
 
 const PAGE_SIZE = 60;
@@ -36,6 +36,11 @@ export class ListRenderer {
     this.rendered = 0;
     this.nodesById = new Map();
     this.inert = false;
+    // Where a shift-click measures from. Tracked here rather than read back off
+    // the document because the shift-click suppresses focus, and cleared by
+    // setRows below — an anchor in a list that has been replaced points at a
+    // row the user never picked.
+    this.anchorId = null;
 
     this.observer = new IntersectionObserver(
       (entries) => {
@@ -47,6 +52,12 @@ export class ListRenderer {
 
     container.addEventListener('click', (event) => this.onClick(event));
     container.addEventListener('change', (event) => this.onChange(event));
+    // Shift-clicking a list is also how the browser is told to drag a text
+    // selection across it, and it does that on mousedown. Suppressed before it
+    // starts rather than cleared afterwards, which leaves a frame of blue.
+    container.addEventListener('mousedown', (event) => {
+      if (event.shiftKey && event.target.closest('.row')) event.preventDefault();
+    });
   }
 
   onClick(event) {
@@ -56,16 +67,28 @@ export class ListRenderer {
 
     if (event.target.closest('[data-action="open"]')) return this.handlers.onOpenProfile(id);
 
-    // The checkbox fires its own change event and the click bubbles here too;
-    // toggling again below would cancel it out.
-    if (event.target.closest('.row-check')) return;
-
-    // Acting is bulk-only, so the rest of the row is a selection target.
     const checkbox = row.querySelector('.row-check');
     if (!checkbox) return;
-    checkbox.checked = !checkbox.checked;
-    row.classList.toggle('is-selected', checkbox.checked);
-    this.handlers.onToggleSelect(id, checkbox.checked);
+
+    // A click on the checkbox has already toggled it by the time this runs; a
+    // click anywhere else in the row is the toggle, since acting is bulk-only
+    // and the rest of the row is therefore a selection target.
+    const onCheckbox = Boolean(event.target.closest('.row-check'));
+    const checked = onCheckbox ? checkbox.checked : !checkbox.checked;
+
+    if (event.shiftKey) return this.selectRange(id, checked);
+
+    // Its own change event follows and does the work; toggling here as well
+    // would cancel it out.
+    if (onCheckbox) {
+      this.anchorId = id;
+      return;
+    }
+
+    checkbox.checked = checked;
+    row.classList.toggle('is-selected', checked);
+    this.anchorId = id;
+    this.handlers.onToggleSelect(id, checked);
   }
 
   onChange(event) {
@@ -74,6 +97,31 @@ export class ListRenderer {
     const row = checkbox.closest('.row');
     row.classList.toggle('is-selected', checkbox.checked);
     this.handlers.onToggleSelect(row.dataset.id, checkbox.checked);
+  }
+
+  /**
+   * Give every row between the anchor and `id` the state the clicked one just
+   * took — Gmail's rule, and the one the gesture is borrowed from.
+   *
+   * Measured over the rows actually mounted rather than over `this.rows`: the
+   * scroller renders a window, and a range can only run between two rows the
+   * user was able to click. With no usable anchor rangeIds returns the clicked
+   * row alone, which is a plain click, which is the right thing to fall back to.
+   *
+   * The clicked row is included, so when the click was on a checkbox the change
+   * event that follows re-reports a state this already set. That is a no-op, not
+   * a second toggle.
+   */
+  selectRange(id, checked) {
+    for (const rowId of rangeIds([...this.nodesById.keys()], this.anchorId, id)) {
+      const node = this.nodesById.get(rowId);
+      const checkbox = node?.querySelector('.row-check');
+      if (!checkbox || checkbox.disabled) continue;
+      checkbox.checked = checked;
+      node.classList.toggle('is-selected', checked);
+      this.handlers.onToggleSelect(rowId, checked);
+    }
+    this.anchorId = id;
   }
 
   /**
@@ -108,6 +156,10 @@ export class ListRenderer {
     this.rows = rows;
     this.rendered = 0;
     this.nodesById.clear();
+    // A filter change reorders what is on screen, so the last row clicked is no
+    // longer a point anything can be measured from. Dropped rather than left to
+    // rangeIds, which would only catch the case where it also left the list.
+    this.anchorId = null;
     this.container.textContent = '';
     this.extend();
   }
@@ -239,12 +291,16 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute:
  * be passed in rather than left to CSS because a storage change can repaint this
  * list mid-run, and the rebuilt checkboxes would come back enabled.
  *
- * `skipNotes` is `{ [userId]: note }` for rows an outside feature has already
- * handled — the note is rendered under the username and the row is left out of
- * select-all. A plain string rather than anything structured, because this file
- * has no business knowing what the other feature did; it renders the sentence
- * it is handed. The checkbox stays live: the note says a row is not worth
- * ticking by default, not that it cannot be ticked.
+ * `skipNotes` is `{ [userId]: { label, date } }` for rows an outside feature has
+ * already handled — the label takes the action chip and the date goes into the
+ * row's tooltip. Values this file prints rather than interprets: it has no
+ * business knowing what the other feature did. The checkbox stays live, because
+ * a note says a row is not worth ticking by default, not that it cannot be.
+ *
+ * The label takes the chip rather than a line of its own. A second line doubles
+ * the height of every marked row, and at the width this panel is used at a log
+ * of harvested accounts is then a log at half density — while the chip it would
+ * sit beneath says "Accepted", which the Accepted tab above already established.
  */
 export function renderLog(container, records, {
   now, selected, canFollow, inert = false, skipNotes = {},
@@ -280,16 +336,21 @@ export function renderLog(container, records, {
         `Open @${record.username} in the main tab`);
       row.appendChild(username);
 
-      const action = el('span', `log-action log-action-${record.action}`,
-        ACTION_LABELS[record.action] || record.action);
-      row.appendChild(action);
-
-      // Its own line under the username rather than a fifth column. The panel
-      // is dragged to ~260px beside Instagram, where a row already spends its
-      // width on the time, the username and the action chip — a note inline
-      // would leave the username four characters wide.
+      const label = ACTION_LABELS[record.action] || record.action;
       const note = skipNotes[record.userId];
-      if (note) row.appendChild(el('span', 'log-note', note));
+
+      // The note takes the chip's text but not its colour: a rejection that was
+      // harvested anyway is still the one row on screen worth noticing, and
+      // dropping it to the default grey would hide that behind the mark.
+      const action = el('span', `log-action log-action-${record.action}`,
+        note ? note.label : label);
+      if (note) {
+        action.classList.add('is-noted');
+        // What the chip gave up to make room. The date in full rather than the
+        // chip's MM/DD, and the action name the mark is standing in front of.
+        action.title = note.date ? `${label} · harvested ${note.date}` : label;
+      }
+      row.appendChild(action);
 
       fragment.appendChild(row);
     }

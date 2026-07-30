@@ -445,20 +445,35 @@ test('normalizeHarvested survives a record written by something else', () => {
   assert.deepEqual(normalizeHarvested(), {});
 });
 
-test('harvestNote dates the mark the way the log dates its own days', () => {
-  assert.equal(harvestNote({ at: NOW }, NOW), 'Harvested today');
-  assert.equal(harvestNote({ at: NOW - DAY }, NOW), 'Harvested yesterday');
-  assert.equal(harvestNote({ at: Date.UTC(2026, 6, 4) }, NOW), 'Harvested 4 Jul 2026');
+test('harvestNote labels the chip in MM/DD and keeps the full date for the tooltip', () => {
+  // Zero-padded and no year: the chip has a row's leftover width to live in,
+  // and the unambiguous version is one hover away.
+  assert.deepEqual(harvestNote({ at: NOW }, NOW), { label: 'Harvested 07/28', date: 'today' });
+  assert.deepEqual(harvestNote({ at: NOW - DAY }, NOW),
+    { label: 'Harvested 07/27', date: 'yesterday' });
+  assert.deepEqual(harvestNote({ at: Date.UTC(2026, 6, 4) }, NOW),
+    { label: 'Harvested 07/04', date: '4 Jul 2026' });
+});
+
+test('harvestNote dates the mark off the same UTC day the log groups by', () => {
+  // Late enough on the 28th UTC that any local reading of it lands on the 29th.
+  const lateOn28th = Date.UTC(2026, 6, 28, 23, 30);
+  assert.equal(harvestNote({ at: lateOn28th }, NOW).label, 'Harvested 07/28');
 });
 
 test('harvestNote still marks a record that has no date', () => {
-  // Everything migrated from the old id-only list lands here.
-  assert.equal(harvestNote({ at: null }, NOW), 'Harvested');
+  // Everything migrated from the old id-only list lands here. No date for the
+  // chip and none for the tooltip either, which is what render.js keys off to
+  // fall back to the bare action name.
+  assert.deepEqual(harvestNote({ at: null }, NOW), { label: 'Harvested', date: null });
   assert.equal(harvestNote(null, NOW), null);
 });
 
 test('harvestNotes turns the stored record set into one note per account', () => {
   const notes = harvestNotes({ 1: { at: NOW }, 2: { at: null } }, NOW);
-  assert.deepEqual(notes, { 1: 'Harvested today', 2: 'Harvested' });
+  assert.deepEqual(notes, {
+    1: { label: 'Harvested 07/28', date: 'today' },
+    2: { label: 'Harvested', date: null },
+  });
   assert.deepEqual(harvestNotes(), {});
 });

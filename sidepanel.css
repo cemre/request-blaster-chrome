@@ -728,21 +728,24 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
    actually happening the faintest thing on screen. It now keeps full opacity
    against 40% neighbours, which is all the lighting it needs: no new edge
    colour, and the inset --primary edge goes on meaning "selected" alone. */
-body.is-acting .row,
-body.is-acting .log-row {
+/* Two classes, not one: a list freezes for a run that acts on it and for no
+   other, so an accept run leaves the log alone and a harvest leaves the
+   requests list alone. See isActingOnRequests / isActingOnLog. */
+body.is-acting-requests .row,
+body.is-acting-log .log-row {
   opacity: 0.4;
   pointer-events: none;
   cursor: default;
 }
 
-body.is-acting .row.is-busy { opacity: 1; }
+body.is-acting-requests .row.is-busy { opacity: 1; }
 
 /* Opening a profile survives the freeze. It is a read, it changes nothing, and
    it is the one thing worth doing mid-run — seeing who you are about to reject.
    Everything else in a row is a selection target, and the queue is already
    holding the ids it started with. */
-body.is-acting .row [data-action='open'],
-body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
+body.is-acting-requests .row [data-action='open'],
+body.is-acting-log .log-row [data-action='open'] { pointer-events: auto; }
 
 .row-check {
   width: 16px;
@@ -911,10 +914,7 @@ body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   align-items: center;
-  /* Split, because only noted rows have a second row and 8px between a
-     username and its own footnote reads as two separate things. */
-  column-gap: 8px;
-  row-gap: 2px;
+  gap: 8px;
   padding: 6px var(--gap);
   border-bottom: 1px solid var(--border);
 }
@@ -931,18 +931,6 @@ body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
 
 /* Rows with nothing to follow back keep the columns aligned. */
 .log-check-spacer { width: 16px; }
-
-/* A second line under the username, not a fifth column: at 260px the row has
-   no width left to give one. Column 3 is the username's, so the note hangs
-   below it and runs to the row's end; auto-placement finds row 2 on its own. */
-.log-note {
-  grid-column: 3 / -1;
-  font-size: 10.5px;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .log-time {
   font-size: 11px;
@@ -980,6 +968,12 @@ body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
   color: var(--danger);
   font-weight: 500;
 }
+
+/* The harvest mark, standing where the action label was. It keeps whatever
+   colour the action gave it — a rejection that was harvested anyway is still
+   the one row on screen worth noticing — and only borrows the log's own figure
+   spacing, so a column of dates lines up the way the timestamps beside them do. */
+.log-action.is-noted { font-variant-numeric: tabular-nums; }
 
 .log-footer {
   display: flex;

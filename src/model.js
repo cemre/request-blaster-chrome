@@ -317,3 +317,29 @@ export function formatShownCount(visible, total) {
   if (visible !== total) return `${visible} of ${total}`;
   return `${total} request${total === 1 ? '' : 's'}`;
 }
+
+/**
+ * The ids a shift-click covers: everything from the anchor to the clicked row,
+ * inclusive.
+ *
+ * `ordered` is the selectable ids in the order they appear on screen, so which
+ * of the two came first is a fact about that list rather than about the clicks
+ * — hence no assumption that the anchor precedes the click. Dragging a range
+ * upwards is the same gesture as dragging it down.
+ *
+ * Returns just the clicked id when there is no usable anchor: a first click, or
+ * one whose anchor a repaint has since taken off screen. That is the same
+ * outcome as a plain click, which is what the caller should then treat it as.
+ *
+ * Both lists share this because both got range select at once, and the rule is
+ * arithmetic over an ordered list rather than anything either list knows.
+ */
+export function rangeIds(ordered = [], anchorId, clickedId) {
+  const to = ordered.indexOf(clickedId);
+  if (to === -1) return [];
+
+  const from = ordered.indexOf(anchorId);
+  if (from === -1) return [clickedId];
+
+  return ordered.slice(Math.min(from, to), Math.max(from, to) + 1);
+}

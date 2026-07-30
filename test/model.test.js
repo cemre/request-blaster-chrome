@@ -15,6 +15,7 @@ import {
   isDefaultPic,
   mergeRows,
   parseMutualCount,
+  rangeIds,
   sortRows,
   toCachedProfile,
   usesEnrichedFilters,
@@ -472,4 +473,37 @@ test('formatShownCount names the unit when the list is whole', () => {
 test('formatShownCount reports both numbers when a filter is narrowing the list', () => {
   assert.equal(formatShownCount(5, 199), '5 of 199');
   assert.equal(formatShownCount(0, 199), '0 of 199');
+});
+
+// ------------------------------------------------------------ range select
+
+const ROWS = ['a', 'b', 'c', 'd', 'e'];
+
+test('rangeIds covers the anchor, the clicked row, and everything between', () => {
+  assert.deepEqual(rangeIds(ROWS, 'b', 'd'), ['b', 'c', 'd']);
+});
+
+test('rangeIds does not care which of the two came first on screen', () => {
+  // Dragging a range upwards is the same gesture as dragging it down, so the
+  // order is a fact about the list rather than about the two clicks.
+  assert.deepEqual(rangeIds(ROWS, 'd', 'b'), ['b', 'c', 'd']);
+});
+
+test('rangeIds degrades to the clicked row alone when the anchor is unusable', () => {
+  // A first click has no anchor; a repaint can take an existing one off screen.
+  // Both are a plain click, which is what the caller then performs.
+  assert.deepEqual(rangeIds(ROWS, null, 'c'), ['c']);
+  assert.deepEqual(rangeIds(ROWS, 'gone', 'c'), ['c']);
+});
+
+test('rangeIds covers one row when the anchor is the row clicked', () => {
+  assert.deepEqual(rangeIds(ROWS, 'c', 'c'), ['c']);
+});
+
+test('rangeIds covers nothing when the clicked row is not in the list', () => {
+  // Not the anchor's fallback: there is no row to act on at all here, and
+  // returning the id anyway would tick something the list does not contain.
+  assert.deepEqual(rangeIds(ROWS, 'a', 'gone'), []);
+  assert.deepEqual(rangeIds([], 'a', 'b'), []);
+  assert.deepEqual(rangeIds(undefined, 'a', 'b'), []);
 });

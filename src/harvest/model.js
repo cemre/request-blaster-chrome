@@ -139,20 +139,38 @@ export function normalizeHarvested(stored) {
 }
 
 /**
- * How one harvested account reads on its log row.
+ * How one harvested account reads on its log row: `{ label, date }`.
  *
- * Dated through the log's own dayLabel rather than a second format invented for
- * one chip, so a row reading "Harvested yesterday" sits under a "Yesterday"
- * heading that agrees with it. Lower-cased, because it is a phrase here and a
- * heading there.
+ * `label` takes the row's action chip, which at the width this panel is used at
+ * — dragged to ~260px beside Instagram — has room for a number and not for a
+ * month name. So MM/DD, and no year: the chip is a glance, and `date` carries
+ * the unambiguous version into the row's tooltip for when the glance is not
+ * enough.
+ *
+ * Both are cut from the same UTC day key the log's headings come from, so a
+ * row harvested the day it was accepted shows the date of the heading it sits
+ * under rather than one a timezone away from it.
+ *
+ * A legacy mark has no date to give either field: those accounts really were
+ * harvested, we just no longer know when.
  */
 export function harvestNote(entry, now = Date.now()) {
   if (!entry) return null;
-  if (!Number.isFinite(entry.at)) return 'Harvested';
+  if (!Number.isFinite(entry.at)) return { label: 'Harvested', date: null };
 
-  const day = dayLabel(dayKeyDate(dayKey(entry.at)), now);
-  const relative = day === 'Today' || day === 'Yesterday';
-  return `Harvested ${relative ? day.toLowerCase() : day}`;
+  const isoDate = dayKeyDate(dayKey(entry.at));
+  const [, month, day] = isoDate.split('-');
+
+  // Through the log's own dayLabel rather than a second format invented here,
+  // so "harvested yesterday" agrees with the "Yesterday" heading above it.
+  // Lower-cased only where it is a word — a date is spelled the same mid-phrase.
+  const label = dayLabel(isoDate, now);
+  const relative = label === 'Today' || label === 'Yesterday';
+
+  return {
+    label: `Harvested ${month}/${day}`,
+    date: relative ? label.toLowerCase() : label,
+  };
 }
 
 /** Every harvested account as `{ [pk]: note }`, ready for the panel's rows. */

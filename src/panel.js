@@ -17,6 +17,7 @@ import {
   filtersActive,
   formatShownCount,
   mergeRows,
+  rangeIds,
   sortRows,
   toCachedProfile,
   usesEnrichedFilters,
@@ -64,6 +65,10 @@ const state = {
   capped: false,
   hydrationQueue: null,
   actionQueue: null,
+  // 'requests' | 'log' — which list the action queue is working through, so the
+  // freeze can be confined to it. One slot, because the two write queues share
+  // one rate limit and so can never both be running; null whenever it is.
+  actionScope: null,
   // A run owned by a feature outside this file, handed in as a controller
   // through mountHarvest's options (see externalRun below). Named for what it
   // is, not for whichever feature currently happens to be the only one using
@@ -106,10 +111,15 @@ const state = {
     // recomputeLog rather than at each use, because two places need it and they
     // used to disagree about what "all" meant.
     selectable: [],
-    // `{ [userId]: note }` from an outside feature, via the skipNotes seam
-    // below. A noted row shows the note and is left out of `selectable`.
+    // `{ [userId]: { label, date } }` from an outside feature, via the skipNotes
+    // seam below. A noted row shows the note on its action chip and is left out
+    // of `selectable`.
     skipNotes: {},
     selected: new Set(),
+    // Where a shift-click measures from. Survives the repaints a run causes,
+    // unlike anything read back off the rendered rows; falls back to a plain
+    // click on its own once the row it names is no longer on screen.
+    anchorId: null,
     kind: 'all',
     search: '',
   },
@@ -400,38 +410,55 @@ function syncRun() {
     : 0;
   bar.style.setProperty('--run-pct', `${pct}%`);
 
+  // The one place that can notice the handover, because it is the one place
+  // both queues report every transition to. A guest that started behind the
+  // action queue is told the moment that queue ends and the meter — with the
+  // only Stop this panel has — becomes its own.
+  const hasMeter = Boolean(state.externalQueue) && activeRun()?.queue === state.externalQueue;
+  if (hasMeter !== externalHadMeter) {
+    externalHadMeter = hasMeter;
+    externalRun.onMeterChange(hasMeter);
+  }
+
   syncToolbar();
 }
 
 /**
- * Whether a run in flight should freeze the lists.
+ * Whether a run in flight should freeze the requests list, and whether one
+ * should freeze the log.
  *
- * Hydration is excluded: it changes nothing on Instagram's side, so there is no
- * reason to stop you filtering and selecting through it.
+ * A list freezes for a run that acts on it, and for no other. A run holds a
+ * specific set of rows it captured when it started, so a selection made in the
+ * list it is working through is a selection it will not honour — that is the
+ * whole of the argument, and it says nothing about the other list.
  *
- * An external run freezes too, though it writes nothing either — its reason is
- * not hydration's. It acts on a specific set of rows the queue captured when it
- * started, so changing the selection mid-run changes nothing about what is
- * actually running; that is the action queue's argument (a queue holding ids it
- * started with), not "we only read". This is the one place the rule for an
- * external run diverges from the rule for hydration.
+ * Which is why this is two functions and not the one boolean it used to be.
+ * `state.actionQueue` is shared by the two write queues, so `actionScope` says
+ * which list the one in flight belongs to: accepting 200 requests takes ten
+ * minutes, and for all ten the Log tab was disabled by a queue that never
+ * touches it — long enough that lining up the next harvest, which is a read,
+ * was the obvious thing to do and the one thing you could not do.
  *
- * One function because two readings of it drifted apart once already: this said
- * "or external", renderLog's `inert` said "action queue only", and a repaint
- * mid-harvest handed the log's checkboxes back.
+ * Hydration freezes nothing, as ever: it changes nothing anywhere.
  */
-function isActing() {
-  return Boolean(state.actionQueue) || Boolean(state.externalQueue);
+function isActingOnRequests() {
+  return state.actionScope === 'requests' && Boolean(state.actionQueue);
 }
 
-/** Apply that freeze — dimmed, and inert but for the profile links. */
+function isActingOnLog() {
+  // The harvest reads rather than writes, but it reads the log's own selection,
+  // so it freezes the log for the same reason the follow-back queue does.
+  return (state.actionScope === 'log' && Boolean(state.actionQueue))
+    || Boolean(state.externalQueue);
+}
+
+/** Apply those freezes — dimmed, and inert but for the profile links. */
 function syncActing() {
-  const acting = isActing();
-  document.body.classList.toggle('is-acting', acting);
-  renderer.setInert(acting);
-  // Follow-back is a write too, and it acts on the log — so the log freezes on
-  // the same terms. Patched in place here; renderLog reapplies it on repaint.
-  for (const box of document.querySelectorAll('.log-check')) box.disabled = acting;
+  document.body.classList.toggle('is-acting-requests', isActingOnRequests());
+  document.body.classList.toggle('is-acting-log', isActingOnLog());
+  renderer.setInert(isActingOnRequests());
+  // Patched in place here; renderLog reapplies it on repaint.
+  for (const box of document.querySelectorAll('.log-check')) box.disabled = isActingOnLog();
 }
 
 /**
@@ -461,15 +488,32 @@ const externalRun = {
     syncRun();
     syncActing();
   },
+  /**
+   * Replaced by the guest with `(held) => …`, called whenever the answer
+   * changes: whether its run is the one the toolbar is currently reporting,
+   * and therefore whether the meter's Stop reaches it.
+   *
+   * A push rather than something to poll, because the handover happens without
+   * the guest doing anything — the action queue outranks it and can finish at
+   * any point, at which the guest silently gains the meter it did not have when
+   * it started. Only a fact about this panel's own toolbar crosses the seam;
+   * the guest is still never named here.
+   */
+  onMeterChange: () => {},
 };
 
+// The last value handed to onMeterChange, so syncRun — which runs on every tick
+// of either queue — reports the transition rather than the state.
+let externalHadMeter = false;
+
 /**
- * Rows another feature has already handled, as `{ [userId]: note }`.
+ * Rows another feature has already handled, as `{ [userId]: { label, date } }`.
  *
  * The counterpart to externalRun, and named for the role rather than the
- * feature for the same reason: the panel shows the note and stops select-all
- * ticking those rows, and never learns what the note means. Handed to
- * mountHarvest, which pushes the accounts it has already written to a batch.
+ * feature for the same reason: the panel prints the label on the row's action
+ * chip and the date in its tooltip, stops select-all ticking those rows, and
+ * never learns what either value means. Handed to mountHarvest, which pushes
+ * the accounts it has already written to a batch.
  */
 const skipNotes = {
   set(byId) {
@@ -520,7 +564,7 @@ function setMode(mode) {
   // The two modes act on different things; carrying a selection across would
   // mean the toolbar's buttons no longer match what is ticked.
   state.selected.clear();
-  state.log.selected.clear();
+  clearLogSelection();
   renderer.setSelection(state.selected);
 
   if (mode === 'log' && !state.log.loaded) loadLogPage();
@@ -633,11 +677,11 @@ function recomputeLog() {
     canFollow,
     // A run repaints this list from under itself — a follow-back's own writes
     // land in the log, and a harvest pushes a note per account — so the freeze
-    // has to be reapplied on every render, not just when it starts. Through
-    // isActing() rather than a second reading of the same rule: syncActing
-    // disables these checkboxes for an external run too, and this used to read
-    // only the action queue, so a repaint mid-harvest handed them back.
-    inert: isActing(),
+    // has to be reapplied on every render, not just when it starts. Through the
+    // same predicate syncActing uses rather than a second reading of the rule:
+    // the two drifted apart once already, and a repaint mid-harvest handed the
+    // checkboxes back.
+    inert: isActingOnLog(),
     skipNotes: state.log.skipNotes,
   });
 
@@ -713,6 +757,7 @@ async function runFollowBack() {
     },
     onFinish: ({ halted, stopped, failures, done, total }) => {
       state.actionQueue = null;
+      state.actionScope = null;
       state.actionProgress = null;
       syncRun();
       syncActing();
@@ -729,6 +774,7 @@ async function runFollowBack() {
   });
 
   state.actionQueue = queue;
+  state.actionScope = 'log';
   // Seeded before the first item rather than left to the first onProgress: at up
   // to 3s per write, the meter would otherwise sit closed through the whole of
   // the first one.
@@ -1012,6 +1058,7 @@ async function runBulk(action) {
     },
     onFinish: ({ halted, stopped, failures, done, total }) => {
       state.actionQueue = null;
+      state.actionScope = null;
       state.actionProgress = null;
       syncRun();
       syncActing();
@@ -1031,6 +1078,7 @@ async function runBulk(action) {
   });
 
   state.actionQueue = queue;
+  state.actionScope = 'requests';
   // Seeded before the first item, as in runFollowBack — at up to 3s per write
   // the meter would otherwise stay closed through the whole of the first one.
   state.actionProgress = { label: `${spec.gerund} 0 / ${ids.length}…`, done: 0, total: ids.length };
@@ -1082,7 +1130,7 @@ function bindLog() {
   for (const tab of document.querySelectorAll('.log-tab')) {
     tab.addEventListener('click', () => {
       state.log.kind = tab.dataset.kind;
-      state.log.selected.clear();
+      clearLogSelection();
       recomputeLog();
     });
   }
@@ -1115,6 +1163,13 @@ function bindLog() {
 
   const list = $('log-list');
 
+  // Shift-clicking a list is also how the browser is told to drag a text
+  // selection across it, and it does that on mousedown. Suppressed before it
+  // starts rather than cleared afterwards, which leaves a frame of blue.
+  list.addEventListener('mousedown', (event) => {
+    if (event.shiftKey && event.target.closest('.log-row')) event.preventDefault();
+  });
+
   list.addEventListener('change', (event) => {
     const checkbox = event.target.closest('.log-check');
     if (!checkbox) return;
@@ -1129,20 +1184,33 @@ function bindLog() {
     if (event.target.closest('[data-action="open"]')) {
       return api.navigateToProfile(rowUsername(row)).catch(reportError);
     }
-    if (event.target.closest('.log-check') || !row.classList.contains('is-selectable')) return;
+    if (!row.classList.contains('is-selectable')) return;
 
     const checkbox = row.querySelector('.log-check');
-    checkbox.checked = !checkbox.checked;
-    toggleLogSelection(row.dataset.id, checkbox.checked);
+    if (checkbox.disabled) return;
+
+    // A click on the checkbox has already toggled it by the time this runs; a
+    // click anywhere else in the row is the toggle.
+    const onCheckbox = Boolean(event.target.closest('.log-check'));
+    const checked = onCheckbox ? checkbox.checked : !checkbox.checked;
+
+    if (event.shiftKey) return selectLogRange(row.dataset.id, checked);
+
+    state.log.anchorId = row.dataset.id;
+    // Its own change event follows and does the work; toggling here as well
+    // would cancel it out.
+    if (onCheckbox) return;
+
+    checkbox.checked = checked;
+    toggleLogSelection(row.dataset.id, checked);
   });
 
   $('log-select-all').addEventListener('click', () => {
     const { next } = history.selectAllPlan(state.log.selectable, state.log.selected);
 
-    // Mutated in place rather than reassigned: renderLog was handed this Set
-    // and the harvest reads it through a closure, so swapping the object would
-    // leave both holding the previous selection.
-    state.log.selected.clear();
+    // A wholesale replacement, so the anchor goes with it — see
+    // clearLogSelection, which is also where the mutate-in-place rule lives.
+    clearLogSelection();
     for (const id of next) state.log.selected.add(id);
     recomputeLog();
   });
@@ -1164,7 +1232,7 @@ function bindLog() {
     state.log.loadedDays = 0;
     state.log.records = [];
     state.log.seen.clear();
-    state.log.selected.clear();
+    clearLogSelection();
     recomputeLog();
     setStatus('Log cleared.');
   });
@@ -1175,7 +1243,20 @@ function rowUsername(row) {
   return row.querySelector('.log-user').textContent.replace(/^@/, '');
 }
 
-function toggleLogSelection(userId, checked) {
+/**
+ * Drop the log's selection and the point a shift-click measures from.
+ *
+ * The two go together: an anchor is the last row you picked, and it means
+ * nothing once the picks it belonged to are gone. Cleared in place rather than
+ * reassigned — renderLog was handed this Set and the harvest reads it through a
+ * closure, so swapping the object would leave both holding the old selection.
+ */
+function clearLogSelection() {
+  state.log.selected.clear();
+  state.log.anchorId = null;
+}
+
+function applyLogSelection(userId, checked) {
   if (checked) state.log.selected.add(userId);
   else state.log.selected.delete(userId);
 
@@ -1185,6 +1266,38 @@ function toggleLogSelection(userId, checked) {
     if (box) box.checked = checked;
     node.classList.toggle('is-selected', checked);
   }
+}
+
+function toggleLogSelection(userId, checked) {
+  applyLogSelection(userId, checked);
+  updateBulkBar();
+}
+
+/**
+ * Give every row between the anchor and `userId` the state the clicked one just
+ * took — Gmail's rule, and the one the gesture is borrowed from.
+ *
+ * Measured over the rows on screen, deduplicated: one account can hold two rows
+ * — accepted, then followed back later — and a range is over accounts, not over
+ * rows, because that is what the selection is. Rows with nothing to follow back
+ * carry no checkbox and are simply not in the list; a range that refused to
+ * cross one would be a range that stops for no visible reason.
+ *
+ * Already-harvested rows are in it. They are left out of `Select all` because
+ * they are not worth ticking by default, and picking one out by hand has always
+ * been allowed — which is exactly what this is.
+ *
+ * The bulk bar is updated once at the end rather than per row: a range can be
+ * the whole page, and each update walks the visible list.
+ */
+function selectLogRange(userId, checked) {
+  const rows = $('log-list').querySelectorAll('.log-row.is-selectable');
+  const ordered = [...new Set([...rows].map((node) => node.dataset.id))];
+
+  for (const id of rangeIds(ordered, state.log.anchorId, userId)) {
+    applyLogSelection(id, checked);
+  }
+  state.log.anchorId = userId;
   updateBulkBar();
 }
 
@@ -1351,7 +1464,7 @@ function bind() {
 
   $('bulk-clear').addEventListener('click', () => {
     if (state.mode === 'log') {
-      state.log.selected.clear();
+      clearLogSelection();
       return recomputeLog();
     }
     state.selected.clear();
