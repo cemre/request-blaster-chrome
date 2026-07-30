@@ -526,8 +526,42 @@ h1 {
    only ever answers *how far*. */
 .toolbar.is-running { border-color: var(--primary); }
 
-/* Reserve room so the last row can always be scrolled clear of the bar. */
-body.has-toolbar .list-scroll { padding-bottom: 92px; }
+/* Reserve room so the last row can always be scrolled clear of the bar. The
+   toolbar used to be one of two fixed heights; a stack of queued operations is
+   neither, so syncToolbar() measures it and publishes --toolbar-h. The 12px is
+   the margin under the card plus a little air. */
+body.has-toolbar .list-scroll { padding-bottom: calc(var(--toolbar-h, 92px) + 12px); }
+
+/* Past about three bars the stack would own the panel, so it scrolls inside
+   itself instead. The running job is first, so what scrolls out of reach is
+   always work that has not started. */
+.run-stack {
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+/* Hairlines between bars, and under the last one when the bulk bar follows.
+   :not([hidden]) because an adjacent sibling still matches while display:none,
+   which would leave a seam floating above nothing. */
+.run-stack > * + * { border-top: 1px solid var(--border); }
+.run-stack:not([hidden]) + .bulk-bar { border-top: 1px solid var(--border); }
+
+/* A job still waiting its turn. Quieter than a meter by a whole step: no fill,
+   no spinner and secondary text, because nothing about it is happening yet and
+   three of these under a running bar must not compete with it. */
+.run-queued {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* Paused: the fill stays exactly where the halt left it — that figure is the
+   most useful thing on screen — but the spinner goes, because nothing is
+   turning and a spinner that keeps turning through a pause is a lie. */
+.run-progress.is-paused .spinner { display: none; }
 
 .bulk-bar {
   display: flex;
@@ -535,11 +569,6 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   gap: 8px;
   padding: 8px 10px;
 }
-
-/* Only when both are on screen — hydration runs while a selection is waiting.
-   :not([hidden]) because an adjacent sibling still matches while display:none,
-   which would leave the seam floating above the bulk bar on its own. */
-.run-progress:not([hidden]) + .bulk-bar { border-top: 1px solid var(--border); }
 
 .bulk-top {
   display: flex;
@@ -553,9 +582,10 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
    knockout layer reads it as a clip inset. They resolve against the same box, so
    the white text and the blue behind it cannot drift apart by a pixel.
 
-   Two hosts wear this: the toolbar reporting an action queue, and the header
-   slot reporting a hydration batch. Everything below is host-agnostic; the two
-   differ only in padding, radius and the colour their Stop sits on. */
+   Two hosts wear this: the toolbar's run stack, one per running or paused job,
+   and the header slot reporting a hydration batch. Everything below is
+   host-agnostic; the two differ only in padding, radius and the colour their
+   Stop sits on. */
 .run-progress {
   --run-pct: 0%;
   position: relative;
@@ -637,9 +667,13 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
   z-index: 2;
 }
 
-#run-stop { background: var(--bg-elevated); }
+.run-progress .meter-stop { background: var(--bg-elevated); }
+/* The header slot needs none: its meter is a 3px rule along the bottom edge,
+   which never passes behind the button. */
+#hydration-run .meter-stop { background: none; }
 
-#run-stop:hover:not(:disabled),
+.run-progress .meter-stop:hover:not(:disabled),
+.run-queued .meter-stop:hover:not(:disabled),
 #stop-hydration:hover:not(:disabled) {
   background: var(--secondary-bg);
   color: var(--text);
@@ -662,8 +696,7 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 }
 
 .bulk-count,
-#run-label,
-#run-label-knockout {
+.run-label {
   flex: 1;
   min-width: 0;
   font-size: 12px;
@@ -721,31 +754,52 @@ body.has-toolbar .list-scroll { padding-bottom: 92px; }
 .row.is-rejected { opacity: 0.4; }
 .row.is-failed { background: var(--danger-bg); }
 
-/* While the action queue runs, the list is what is being written to, so it goes
-   inert. The filter and result bars stay live — they only read.
+/* A row some job is holding. This used to be `body.is-acting .row`, which dimmed
+   the entire list the moment any write began — it answered a question about the
+   rows a queue had claimed by taking away all of them, and made queueing a
+   second operation impossible. The rule now lands only where it is true, and
+   every other row stays live and selectable.
 
    The row being written to used to be dimmed to 0.55, which made the one thing
    actually happening the faintest thing on screen. It now keeps full opacity
    against 40% neighbours, which is all the lighting it needs: no new edge
    colour, and the inset --primary edge goes on meaning "selected" alone. */
-/* Two classes, not one: a list freezes for a run that acts on it and for no
-   other, so an accept run leaves the log alone and a harvest leaves the
-   requests list alone. See isActingOnRequests / isActingOnLog. */
-body.is-acting-requests .row,
-body.is-acting-log .log-row {
+.row.is-claimed,
+.log-row.is-claimed {
   opacity: 0.4;
   pointer-events: none;
   cursor: default;
 }
 
-body.is-acting-requests .row.is-busy { opacity: 1; }
+.row.is-claimed.is-busy { opacity: 1; }
 
-/* Opening a profile survives the freeze. It is a read, it changes nothing, and
+/* Opening a profile survives the claim. It is a read, it changes nothing, and
    it is the one thing worth doing mid-run — seeing who you are about to reject.
-   Everything else in a row is a selection target, and the queue is already
-   holding the ids it started with. */
-body.is-acting-requests .row [data-action='open'],
-body.is-acting-log .log-row [data-action='open'] { pointer-events: auto; }
+   Everything else in a row is a selection target, and the job is already holding
+   this one. */
+.row.is-claimed [data-action='open'],
+.log-row.is-claimed [data-action='open'] { pointer-events: auto; }
+
+/* The claim's own line, in the colour of the thing that is about to happen
+   rather than the muted grey a harvest note gets — one is history, the other is
+   a queue with this row's name in it. */
+/* A second line under the username, not a fifth column: at 260px the row has
+   no width left to give one. Column 3 is the username's, so it hangs below and
+   runs to the row's end; auto-placement finds row 2 on its own. Only a claim
+   uses this now — the harvest's mark took the action chip instead, because it
+   is permanent and a permanent second line is a log at half density. */
+.log-note {
+  grid-column: 3 / -1;
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The claim's own line, in the colour of the thing that is about to happen
+   rather than the muted grey a harvest note gets — one is history, the other is
+   a queue with this row's name in it. */
+.log-claim { color: var(--text-secondary); }
 
 .row-check {
   width: 16px;
@@ -771,6 +825,23 @@ body.is-acting-log .log-row [data-action='open'] { pointer-events: auto; }
   object-fit: cover;
   background: var(--secondary-bg);
   border: 1px solid var(--border);
+}
+
+/* Screenshot mode (Cmd+Alt+S). Names go through a mask the renderer holds, but
+   a face is not a string, so the one thing this feature does in CSS is take
+   the profile pictures out. A rule rather than a filter set on the <img> in
+   script, so there is nothing to undo — the class goes and the photos are back.
+
+   clip-path, not the border-radius already on .avatar: a filter spreads past
+   the element's box and the radius is applied before it, so the blur alone
+   leaves a square halo around every circle. Clipping happens after filtering,
+   which is what actually holds the shape. The scale then pushes the transparent
+   edge outside the clip, so the rim samples the photo rather than fading into
+   the panel. */
+body.is-anon .avatar {
+  filter: blur(6px);
+  clip-path: circle(50%);
+  transform: scale(1.12);
 }
 
 .row-main { min-width: 0; }
@@ -914,7 +985,10 @@ body.is-acting-log .log-row [data-action='open'] { pointer-events: auto; }
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   align-items: center;
-  gap: 8px;
+  /* Split, because only a claimed row has a second row and 8px between a
+     username and its own footnote reads as two separate things. */
+  column-gap: 8px;
+  row-gap: 2px;
   padding: 6px var(--gap);
   border-bottom: 1px solid var(--border);
 }
@@ -1178,7 +1252,7 @@ body.is-acting-log .log-row [data-action='open'] { pointer-events: auto; }
   .icon-toggle { width: 26px; }
 
   /* The widest thing in a bar is a word naming a control whose value is right
-     beside it. Drop the word and the value carries the chip: "1+", "none".
+     beside it. Drop the word and the value carries the chip: "> 5", "0".
      display, not visibility — this must also leave the accessibility tree, and
      the select's aria-label is what names it from here on.
 
@@ -1194,12 +1268,12 @@ body.is-acting-log .log-row [data-action='open'] { pointer-events: auto; }
      There the chip goes back to naming the control and hides the select behind
      it — the same overlay .select-chip-menu uses, so the popup stays native.
      option:checked tracks the live selection, so this flips as it is used. */
-  .mutuals-chip:has(option[value='0']:checked) { position: relative; }
+  .mutuals-chip:has(option[value='any']:checked) { position: relative; }
 
-  .mutuals-chip:has(option[value='0']:checked) .label-wide,
-  .mutuals-chip:has(option[value='0']:checked) .chevron-standin { display: block; }
+  .mutuals-chip:has(option[value='any']:checked) .label-wide,
+  .mutuals-chip:has(option[value='any']:checked) .chevron-standin { display: block; }
 
-  .mutuals-chip:has(option[value='0']:checked) select {
+  .mutuals-chip:has(option[value='any']:checked) select {
     position: absolute;
     inset: 0;
     width: 100%;

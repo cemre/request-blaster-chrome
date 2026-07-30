@@ -95,7 +95,13 @@ picture, and an approximate mutual count — comes free with the pending list.
 Mutual counts parsed from Instagram's "Followed by …" string are marked with a
 tilde (`~32 mutuals`); once loaded, the exact count replaces it.
 
-**Mutuals → none** is deliberately restricted to rows you have loaded details
+The **Mutuals** menu reads as written: `< 5` is four or fewer, `> 5` is six or
+more, `1+` is anyone with a mutual at all, and `0` is exactly none. Every
+option but `any` needs a count to judge a row by, so rows whose count is still
+unknown are held back rather than guessed at — the panel says how many, and
+**Load details** answers for them.
+
+**Mutuals → 0** goes further and is restricted to rows you have loaded details
 for. A missing "Followed by …" hint is not evidence of zero mutuals: sampled
 against a live queue on 2026-07-28, 128 of 200 pending requests carried no hint
 at all, and half of a random sample of those turned out to have mutuals — one

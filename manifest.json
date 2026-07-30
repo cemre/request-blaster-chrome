@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Request Blaster",
-  "description": "Triage Instagram follow requests from a side panel that survives navigation.",
-  "version": "1.0",
+  "description": "Triage Instagram follow requests in bulk (e.g. accept everyone with N+ mutuals) – advanced controls to /blast/ through your queue.",
+  "version": "1.3",
   "minimum_chrome_version": "114",
 
   "icons": {
@@ -22,10 +22,15 @@
   },
 
   "content_scripts": [{
-    "js": [ "content.js", "banner.js", "harvest-content.js" ],
+    "js": [ "content.js", "banner.js", "harvest-content.js", "anon-content.js" ],
     "matches": [ "*://*.instagram.com/*" ],
     "run_at": "document_idle",
     "all_frames": false
+  }],
+
+  "web_accessible_resources": [{
+    "resources": [ "src/alias.js" ],
+    "matches": [ "*://*.instagram.com/*" ]
   }],
 
   "action": {

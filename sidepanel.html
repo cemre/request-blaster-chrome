@@ -55,8 +55,14 @@
   </div>
 </header>
 
+<!-- Resume and Cancel all appear together, and only for a pipeline Instagram
+     paused. Dismiss goes while they are up: this banner is then the only thing
+     on screen offering to restart the queued work, and a dismissible one would
+     leave that work stranded with no way back to it. -->
 <div id="banner" class="banner" hidden>
   <span id="banner-text"></span>
+  <button id="banner-resume" class="icon-btn" hidden>Resume</button>
+  <button id="banner-cancel-all" class="icon-btn" hidden>Cancel all</button>
   <button id="banner-retry" class="icon-btn" hidden>Retry</button>
   <button id="banner-dismiss" class="icon-btn">Dismiss</button>
 </div>
@@ -86,18 +92,28 @@
         <path d="M1 1.25 5 5l4-3.75" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
       </svg>
       <!-- A select is as wide as its longest option whether or not that option
-           is chosen, so a spelled-out "none (loaded rows)" cost this chip ~60px
-           on every panel at every width. The caveat is not lost: the same text
-           is in the tooltip, and #enriched-warning states it in full whenever
-           the option is actually on. -->
-      <select id="f-mutuals" aria-label="Mutuals" title="&quot;none&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals.">
-        <option value="0">any</option>
-        <option value="none">none</option>
-        <option value="1">1+</option>
-        <option value="5">5+</option>
-        <option value="10">10+</option>
-        <option value="50">50+</option>
-        <option value="100">100+</option>
+           is chosen, so spelling the caveat into "0" — once "none (loaded
+           rows)" — cost this chip ~60px on every panel at every width. The
+           caveat is not lost: the same text is in the tooltip, and
+           #enriched-warning states it in full whenever the option is on.
+
+           The comparison lives in the value ("<5", "10+") so the option and
+           what it does cannot drift apart: readFilters reads the form off the
+           value rather than keeping a second table of its own. Ceilings are
+           strict and floors are inclusive, exactly as written, which also
+           makes the two halves meet: "<5" and "5+" divide the rows in two
+           with no count falling between them, where "<5" against "> 5" used
+           to drop anyone with exactly five. -->
+      <select id="f-mutuals" aria-label="Mutuals" title="&quot;0&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals. The ranges also skip rows whose count is still unknown.">
+        <option value="any">any</option>
+        <option value="0">0</option>
+        <option value="&lt;5">&lt; 5</option>
+        <option value="&lt;10">&lt; 10</option>
+        <option value="1+">1+</option>
+        <option value="5+">5+</option>
+        <option value="10+">10+</option>
+        <option value="50+">50+</option>
+        <option value="100+">100+</option>
       </select>
     </label>
 
@@ -223,31 +239,18 @@
 <!-- Acting is bulk-only, so the controls live in one floating bar over the
      list rather than repeating on every row. -->
 <div id="toolbar" class="toolbar" hidden>
-  <!-- The bar is the progress meter: --run-pct drives both the fill's width and
-       the knockout layer's clip, so the coloured text can never disagree with
-       the colour behind it. The line is rendered twice for that reason — once in
-       --text over the card, once in --primary-text clipped to the fill. Only the
-       first is exposed; the second is the same words in another colour.
+  <!-- One bar per queued, running or paused operation, built in render.js by
+       RunStack — the count is not known here, since you can go on queueing while
+       something runs.
 
-       Shared by both queues. Whichever is running fills this in; when both are,
-       the action wins, because it is the one writing to Instagram. -->
-  <div id="run-progress" class="run-progress" hidden>
-    <div class="run-fill"></div>
-
-    <div class="run-line">
-      <span class="spinner spinner-inline"></span>
-      <span id="run-label"></span>
-    </div>
-
-    <div class="run-line run-line-knockout" aria-hidden="true">
-      <span class="spinner spinner-inline"></span>
-      <span id="run-label-knockout"></span>
-    </div>
-
-    <!-- Carries its own solid background: it is the one thing in this bar that
-         must stay a legible control at every fill level, including 100%. -->
-    <button id="run-stop" class="btn btn-small btn-quiet meter-stop">Stop</button>
-  </div>
+       The running bar is the progress meter: --run-pct drives both the fill's
+       width and the knockout layer's clip, so the coloured text can never
+       disagree with the colour behind it. Its line is rendered twice for that
+       reason — once in --text over the card, once in --primary-text clipped to
+       the fill. Only the first is exposed; the second is the same words in
+       another colour. A queued bar is one quiet line and a Cancel: it has no
+       progress to report until its turn comes. -->
+  <div id="run-stack" class="run-stack" hidden></div>
 
   <div id="bulk-bar" class="bulk-bar" hidden>
     <div class="bulk-top">

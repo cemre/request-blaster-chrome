@@ -4,12 +4,16 @@
 // alive as long as the panel is open, which is exactly as long as any of this
 // work should be running.
 
+import * as anon from './anon.js';
 import * as api from './api.js';
 import * as history from './history.js';
 import * as store from './store.js';
+// #region harvest — build.js deletes this region from the store package
 import { mountHarvest } from './harvest/mount.js';
+// #endregion harvest
+import { JobList } from './jobs.js';
 import { PACING, ThrottledQueue } from './queue.js';
-import { ListRenderer, renderLog } from './render.js';
+import { ListRenderer, RunStack, renderLog } from './render.js';
 import {
   DEFAULT_FILTERS,
   applyFilters,
@@ -27,14 +31,27 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * The three things you can do to a selection. `approveFollow` is two writes
- * against Instagram, not one — see actOnce.
+ * Everything a job can be. The first three are what you can do to a selection of
+ * requests — `approveFollow` is two writes against Instagram, not one, see
+ * actOnce — and the fourth is the log's follow-back.
+ *
+ * All four go through the same pipeline because all four are friendship writes,
+ * and the pacing that keeps the account out of an action block only holds if
+ * there is one queue for the lot of them.
  */
 const ACTIONS = {
   approve: { op: 'approve', label: 'Accept', busy: 'Accepting…', done: 'Accepted', gerund: 'Accepting' },
   approveFollow: { op: 'approve', label: 'Accept + follow', busy: 'Accepting…', done: 'Accepted + followed', gerund: 'Accepting' },
   ignore: { op: 'ignore', label: 'Reject', busy: 'Rejecting…', done: 'Rejected', gerund: 'Rejecting' },
+  followBack: { op: 'follow', label: 'Follow back', busy: 'Following…', done: 'Followed', gerund: 'Following' },
 };
+
+/**
+ * The harvest's bar in the run stack. It is not a job — it only reads, so it runs
+ * alongside the write pipeline rather than in it — but it reports in the same
+ * stack and needs an id there that no job will ever take.
+ */
+const EXTERNAL_BAR_ID = 0;
 
 const BULK_BUTTONS = {
   'bulk-accept': 'approve',
@@ -64,31 +81,30 @@ const state = {
   filters: { ...DEFAULT_FILTERS },
   capped: false,
   hydrationQueue: null,
-  actionQueue: null,
-  // 'requests' | 'log' — which list the action queue is working through, so the
-  // freeze can be confined to it. One slot, because the two write queues share
-  // one rate limit and so can never both be running; null whenever it is.
-  actionScope: null,
+
+  // Every row some job is holding, split by the list it belongs to, as
+  // `Map<id, label>`. Derived in syncClaims from the pipeline and rewritten
+  // whole; nothing mutates it in place. This is what replaced freezing the
+  // lists — see syncClaims.
+  claims: { requests: new Map(), log: new Map() },
+
+  // The row being written to at this instant, if any. Held only so its claim
+  // label can stand aside: actOnce already puts "Accepting…" on that row, and a
+  // claim repaint must not overwrite it with what is merely coming.
+  inFlightId: null,
+
   // A run owned by a feature outside this file, handed in as a controller
   // through mountHarvest's options (see externalRun below). Named for what it
   // is, not for whichever feature currently happens to be the only one using
   // it, so this file never has to learn a second name the day another feature
-  // wants the same seam.
-  externalQueue: null,
-  // What each queue is doing. Null whenever that queue is not running. All three
-  // are held because they are independent and can overlap — you can start a bulk
-  // accept while details are still loading, or while an external run reads in
-  // the background.
-  //
-  // They do not all report to the same place. Hydration owns the header slot
-  // outright; the action queue and an external run share the toolbar, which is
-  // what activeRun arbitrates. That is also why hydration alone carries no
-  // label: the toolbar's two have several gerunds between them and must say
-  // which is running, while hydration has one, spelled in the markup so CSS can
-  // drop it at narrow widths.
+  // wants the same seam. `{ queue, label, done, total, ids }`.
+  external: null,
+
+  // Hydration's own progress, which reports to the header slot and nowhere else.
+  // It carries no label because it has only one gerund, spelled in the markup so
+  // CSS can drop it at narrow widths — unlike the run stack's bars, which have
+  // several between them and must each say which is which.
   hydrationProgress: null,  // { done, total }
-  actionProgress: null,     // { label, done, total }
-  externalProgress: null,   // { label, done, total }
   loading: false,
 
   // 'requests' | 'log'. The log is loaded lazily and only ever holds the day
@@ -126,6 +142,28 @@ const state = {
 };
 
 let renderer;
+let runStack;
+
+/**
+ * The write pipeline. Every accept, reject and follow-back joins it; it runs them
+ * one at a time, and holds a claim on the rows each one is waiting to touch.
+ *
+ * `onChange` is the single repaint for everything the list's shape depends on —
+ * which bars exist, which rows are spoken for, whether the pause banner is still
+ * telling the truth.
+ */
+const jobs = new JobList({
+  runJob: (job) => runJob(job),
+  onChange: () => {
+    syncRunStack();
+    syncClaims();
+    // The pause banner carries the only Resume there is, so it goes when the
+    // pause does — including when the pause lifts because the halted job was
+    // cancelled rather than resumed.
+    if (!jobs.paused && !$('banner-resume').hidden) hideBanner();
+    updateBulkBar();
+  },
+});
 
 /** How long a finished-run message stays on screen. See setStatus. */
 const STATUS_LINGER = 6000;
@@ -155,14 +193,23 @@ function setLoadingText(text) {
   $('loading-text').textContent = text;
 }
 
-function showBanner(text, { retry = false } = {}) {
+function showBanner(text, { retry = false, paused = false } = {}) {
   $('banner-text').textContent = text;
   $('banner-retry').hidden = !retry;
+  $('banner-resume').hidden = !paused;
+  $('banner-cancel-all').hidden = !paused;
+  // A paused pipeline is the one banner that must not be dismissible: this is
+  // where Resume lives, and dismissing it would leave queued work on screen with
+  // nothing anywhere offering to restart it.
+  $('banner-dismiss').hidden = paused;
   $('banner').hidden = false;
 }
 
 function hideBanner() {
   $('banner').hidden = true;
+  $('banner-resume').hidden = true;
+  $('banner-cancel-all').hidden = true;
+  $('banner-dismiss').hidden = false;
 }
 
 function describeError(err) {
@@ -186,6 +233,18 @@ function reportError(err) {
 
 function recompute() {
   const live = state.rows.filter((row) => !state.doneIds.has(row.id));
+
+  // Search matches what is on screen, not what is underneath it. Without this
+  // the search box cannot be demonstrated while screenshot mode is on: you
+  // would be typing a name the row is showing and getting nothing back.
+  // Always written, never conditionally, so turning the mode off cannot leave
+  // a stale pseudonym behind still answering searches.
+  const mask = anon.mask();
+  for (const row of live) {
+    row.alias = mask.on ? mask.username(row.username) : '';
+    row.aliasName = mask.on ? mask.fullName(row.username, row.fullName) : '';
+  }
+
   state.visible = sortRows(applyFilters(live, state.filters), state.settings.sort);
 
   renderer.setRows(state.visible);
@@ -211,8 +270,8 @@ function recompute() {
       : `${unenriched} request${plural} not yet enriched and therefore hidden by these filters.`;
     warning.hidden = false;
   } else if (unknownMutuals > 0) {
-    // A minimum threshold is not enriched-only — the free estimate still
-    // filters — so only the rows Instagram said nothing about get held back.
+    // Neither bound is enriched-only — the free estimate still filters — so
+    // only the rows Instagram said nothing about get held back.
     warning.textContent = `${unknownMutuals} request${unknownMutuals === 1 ? '' : 's'} hidden: Instagram did not report a mutual count for them. Load their details to check.`;
     warning.hidden = false;
   } else {
@@ -263,7 +322,7 @@ function updateEmptyState(live) {
  */
 function resetFilters() {
   $('f-following').checked = false;
-  $('f-mutuals').value = '0';
+  $('f-mutuals').value = 'any';
   $('f-max-followers').value = '';
   for (const id of ['f-zero-posts', 'f-empty-bio', 'f-default-pic', 'f-bot-ratio']) {
     $(id).checked = false;
@@ -347,118 +406,123 @@ function syncHydration() {
 
 function updateBulkBar() {
   const count = state.mode === 'log' ? state.log.selected.size : state.selected.size;
-  // Deliberately not `activeRun()`: hydration and an external run both only
-  // read, so neither is a reason to take the bulk buttons away — only the
-  // action queue's writes are. An external run already freezes the checkboxes
-  // (see syncActing) so the selection itself cannot drift, but that is a
-  // different concern from whether the buttons acting on it should show.
-  const running = Boolean(state.actionQueue);
 
-  $('bulk-bar').hidden = count === 0 || running;
+  // No longer hidden while something runs. A live selection during a run is the
+  // entire point of queueing: the rows a job is holding are inert, everything
+  // else is yours, and these buttons are how the next operation gets queued.
+  $('bulk-bar').hidden = count === 0;
   $('bulk-count').textContent = `${count} selected`;
   syncSelectAll();
   syncToolbar();
 }
 
+const pct = (done, total) => (total > 0 ? Math.round((done / total) * 100) : 0);
+
 /**
- * The run the toolbar reports, and the one its Stop stops.
+ * One bar per thing worth reporting, newest last.
  *
- * Two candidates, not three. Hydration reports through the header slot and has
- * its own Stop there, so it never contends for this meter — which also settles
- * what used to be the awkward half of this decision. The old rule had hydration
- * outrank an external run so that a guest which can run for hours could not bury
- * the panel's own quick status behind its report; now it cannot bury it at all,
- * because the two are never in the same box.
- *
- * Between what is left, the action queue wins outright: it is the one making
- * irreversible writes to Instagram and the one that can get the account rate
- * limited.
+ * The jobs first and the harvest under them: the jobs are the writes, and the
+ * harvest can run for hours without ever being the thing you are waiting on.
  */
-function activeRun() {
-  if (state.actionQueue) return { queue: state.actionQueue, progress: state.actionProgress };
-  if (state.externalQueue) return { queue: state.externalQueue, progress: state.externalProgress };
-  return null;
+function runBars() {
+  const bars = jobs.jobs.map((job) => {
+    const spec = ACTIONS[job.kind];
+    const done = jobs.done(job);
+
+    // A queued job counts nothing yet, so it names the work instead — "Reject 24"
+    // rather than "Rejecting 0 / 24…", which reads as a run that has stalled at
+    // the gate.
+    const label = job.state === 'running'
+      ? `${spec.gerund} ${done} / ${job.total}…`
+      : job.state === 'paused'
+        ? `${spec.gerund} ${done} / ${job.total} · paused`
+        : `${spec.label} ${job.total} · queued`;
+
+    return { id: job.id, state: job.state, label, pct: pct(done, job.total) };
+  });
+
+  if (state.external) {
+    bars.push({
+      id: EXTERNAL_BAR_ID,
+      state: 'running',
+      label: state.external.label,
+      pct: pct(state.external.done, state.external.total),
+    });
+  }
+
+  return bars;
 }
 
 /**
- * Paint the toolbar's progress meter from state.
+ * Paint the run stack from state.
  *
- * Rendered rather than pushed, because two independent queues feed it and either
- * can start or finish while the other is running — the meter has to be able to
- * hand over mid-run without either knowing about the other.
+ * Rendered rather than pushed, because jobs start and finish under it and the
+ * harvest comes and goes alongside — no one of them knows enough to update the
+ * stack on its own.
  *
- * `--run-pct` is the whole mechanism: the fill reads it as a width, the knockout
- * copy of the label reads it as a clip. Reset to 0% when nothing is running, or
- * the next run opens full and counts backwards.
+ * `--run-pct` is still the whole mechanism inside each running bar: the fill
+ * reads it as a width, the knockout copy of the label reads it as a clip. The
+ * stack drops a bar entirely when its job leaves, so nothing has to be reset to
+ * 0% the way one shared meter did.
  */
-function syncRun() {
-  const progress = activeRun()?.progress;
-  const bar = $('run-progress');
+function syncRunStack() {
+  const bars = runBars();
+  runStack.render(bars);
 
-  bar.hidden = !progress;
-  $('toolbar').classList.toggle('is-running', Boolean(progress));
-
-  if (progress) {
-    // Both copies in one statement: they are the same line in two colours, and
-    // a frame where they disagree shows as a seam at the fill's edge.
-    $('run-label').textContent = progress.label;
-    $('run-label-knockout').textContent = progress.label;
-  }
-
-  const pct = progress && progress.total > 0
-    ? Math.round((progress.done / progress.total) * 100)
-    : 0;
-  bar.style.setProperty('--run-pct', `${pct}%`);
-
-  // The one place that can notice the handover, because it is the one place
-  // both queues report every transition to. A guest that started behind the
-  // action queue is told the moment that queue ends and the meter — with the
-  // only Stop this panel has — becomes its own.
-  const hasMeter = Boolean(state.externalQueue) && activeRun()?.queue === state.externalQueue;
-  if (hasMeter !== externalHadMeter) {
-    externalHadMeter = hasMeter;
-    externalRun.onMeterChange(hasMeter);
-  }
+  $('run-stack').hidden = bars.length === 0;
+  // The border and the spinners answer *whether* something is running; a fill
+  // has no width to say it with at 0 / N.
+  $('toolbar').classList.toggle('is-running', bars.some((bar) => bar.state === 'running'));
 
   syncToolbar();
 }
 
 /**
- * Whether a run in flight should freeze the requests list, and whether one
- * should freeze the log.
+ * What a claimed row says about itself.
  *
- * A list freezes for a run that acts on it, and for no other. A run holds a
- * specific set of rows it captured when it started, so a selection made in the
- * list it is working through is a selection it will not honour — that is the
- * whole of the argument, and it says nothing about the other list.
+ * Null for the row being written to right this second — actOnce has already put
+ * "Accepting…" on it, and that is both more specific and more current than
+ * anything this could say.
  *
- * Which is why this is two functions and not the one boolean it used to be.
- * `state.actionQueue` is shared by the two write queues, so `actionScope` says
- * which list the one in flight belongs to: accepting 200 requests takes ten
- * minutes, and for all ten the Log tab was disabled by a queue that never
- * touches it — long enough that lining up the next harvest, which is a read,
- * was the obvious thing to do and the one thing you could not do.
- *
- * Hydration freezes nothing, as ever: it changes nothing anywhere.
+ * Everything else reads as queued, including the rows of the job that is
+ * running: within that job they *are* still queued, and a bare "Reject" chip on
+ * a row reads like a button rather than a plan.
  */
-function isActingOnRequests() {
-  return state.actionScope === 'requests' && Boolean(state.actionQueue);
+function claimLabel(job, id) {
+  if (id === state.inFlightId) return null;
+  const spec = ACTIONS[job.kind];
+  return `${job.state === 'paused' ? 'Paused' : 'Queued'} · ${spec.label}`;
 }
 
-function isActingOnLog() {
-  // The harvest reads rather than writes, but it reads the log's own selection,
-  // so it freezes the log for the same reason the follow-back queue does.
-  return (state.actionScope === 'log' && Boolean(state.actionQueue))
-    || Boolean(state.externalQueue);
-}
+/**
+ * Work out which rows are spoken for, and hand each list its own map.
+ *
+ * This is what replaced freezing the lists wholesale. The old rule dimmed
+ * everything the moment a write started, on the grounds that a queue holds the
+ * ids it began with and a changed selection could not reach them — true, but it
+ * answered a question about *some* rows by taking away *all* of them. A claim
+ * says the same thing about exactly the rows it applies to, which is what lets a
+ * second selection be built and queued while the first is still running.
+ */
+function syncClaims() {
+  const requests = new Map();
+  const log = new Map();
 
-/** Apply those freezes — dimmed, and inert but for the profile links. */
-function syncActing() {
-  document.body.classList.toggle('is-acting-requests', isActingOnRequests());
-  document.body.classList.toggle('is-acting-log', isActingOnLog());
-  renderer.setInert(isActingOnRequests());
-  // Patched in place here; renderLog reapplies it on repaint.
-  for (const box of document.querySelectorAll('.log-check')) box.disabled = isActingOnLog();
+  for (const [id, job] of jobs.claims()) {
+    (job.scope === 'log' ? log : requests).set(id, claimLabel(job, id));
+  }
+
+  // The harvest is not in the pipeline — it only reads, so it runs alongside —
+  // but a log row it captured at start is just as spoken for, and for the reason
+  // the old freeze gave: changing the selection under it changes nothing about
+  // what is actually running.
+  for (const id of state.external?.ids || []) {
+    if (!log.has(id)) log.set(id, 'Queued · Harvest');
+  }
+
+  state.claims = { requests, log };
+  renderer.setClaims(requests);
+  if (state.mode === 'log') recomputeLog();
 }
 
 /**
@@ -466,45 +530,30 @@ function syncActing() {
  * mountHarvest as `externalRun`, but named for the role rather than the
  * feature, since nothing here needs to know which feature is holding it.
  *
- * Mirrors what runBulk/runHydrationBatch do to their own state by hand:
- * `start` seeds the meter before the caller's own first tick the way both
- * queues seed themselves, `update` is a plain progress tick, and `finish`
- * clears state in the one statement that also lifts the freeze.
+ * `start` seeds the bar before the caller's own first tick, the way every queue
+ * here seeds itself rather than leaving a meter closed through a slow first
+ * item; `update` is a plain progress tick; `finish` clears state in the one
+ * statement that also releases the rows.
+ *
+ * `ids` is what the run captured. Optional — a caller that passes none simply
+ * claims nothing, and its rows stay live.
  */
 const externalRun = {
-  start(queue, progress) {
-    state.externalQueue = queue;
-    state.externalProgress = progress;
-    syncRun();
-    syncActing();
+  start(queue, progress, ids = []) {
+    state.external = { queue, ...progress, ids: ids.map(String) };
+    syncRunStack();
+    syncClaims();
   },
   update(progress) {
-    state.externalProgress = progress;
-    syncRun();
+    if (state.external) state.external = { ...state.external, ...progress };
+    syncRunStack();
   },
   finish() {
-    state.externalQueue = null;
-    state.externalProgress = null;
-    syncRun();
-    syncActing();
+    state.external = null;
+    syncRunStack();
+    syncClaims();
   },
-  /**
-   * Replaced by the guest with `(held) => …`, called whenever the answer
-   * changes: whether its run is the one the toolbar is currently reporting,
-   * and therefore whether the meter's Stop reaches it.
-   *
-   * A push rather than something to poll, because the handover happens without
-   * the guest doing anything — the action queue outranks it and can finish at
-   * any point, at which the guest silently gains the meter it did not have when
-   * it started. Only a fact about this panel's own toolbar crosses the seam;
-   * the guest is still never named here.
-   */
-  onMeterChange: () => {},
 };
-
-// The last value handed to onMeterChange, so syncRun — which runs on every tick
-// of either queue — reports the transition rather than the state.
-let externalHadMeter = false;
 
 /**
  * Rows another feature has already handled, as `{ [userId]: { label, date } }`.
@@ -522,6 +571,11 @@ const skipNotes = {
   },
 };
 
+/** Rows in view that select-all may actually tick — everything not spoken for. */
+function selectableRows() {
+  return state.visible.filter((row) => !state.claims.requests.has(row.id));
+}
+
 /**
  * Which way each select-all button will go, derived from the selection rather
  * than toggled on click. Ticking the last row by hand has to flip the label
@@ -531,10 +585,14 @@ const skipNotes = {
  * hidden one costs nothing to keep honest.
  */
 function syncSelectAll() {
-  const shownAll = state.visible.length > 0
-    && state.visible.every((row) => state.selected.has(row.id));
+  // Claimed rows come out of both readings. Left in, "all" would mean rows this
+  // button cannot tick, so it would never flip to Deselect once a job was
+  // holding one of them.
+  const selectable = selectableRows();
+  const shownAll = selectable.length > 0
+    && selectable.every((row) => state.selected.has(row.id));
   $('select-all').textContent = shownAll ? 'Deselect all' : 'Select all';
-  $('select-all').disabled = state.visible.length === 0;
+  $('select-all').disabled = selectable.length === 0;
 
   const plan = history.selectAllPlan(state.log.selectable, state.log.selected);
   $('log-select-all').textContent = plan.mode === 'deselect' ? 'Deselect all' : 'Select all';
@@ -543,13 +601,68 @@ function syncSelectAll() {
 
 /** The floating bar exists only while it has something to show. */
 function syncToolbar() {
-  const visible = !$('bulk-bar').hidden || !$('run-progress').hidden;
+  const visible = !$('bulk-bar').hidden || !$('run-stack').hidden;
   $('toolbar').hidden = !visible;
   document.body.classList.toggle('has-toolbar', visible);
+
+  // The scroller's bottom padding used to be a constant, because the toolbar was
+  // one of two fixed heights. A stack of bars is neither, so the measurement is
+  // published and the padding is computed from it — the last row still has to be
+  // scrollable clear of the bar however many operations are queued.
+  document.body.style.setProperty(
+    '--toolbar-h', visible ? `${$('toolbar').offsetHeight}px` : '0px'
+  );
 }
 
 function rebuildRows() {
   state.rows = mergeRows(state.pendingUsers, state.statuses, state.cache);
+}
+
+// ------------------------------------------------------- screenshot mode
+//
+// Cmd+Alt+S (Ctrl+Alt+S off Mac). Display only: it renames what is drawn and
+// blurs the avatars, here and on the Instagram tab, and touches no stored data
+// and no write. See src/anon.js and src/alias.js.
+
+/**
+ * Real display names for the tab to work from, as `{ handle: fullName }`.
+ *
+ * The tab can name anyone Instagram links, because the href carries the
+ * identity — but a profile header's name sits outside any link, so it needs
+ * telling. We already hold exactly this: the pending list ships `full_name`
+ * for every request, and hydration adds more.
+ */
+function knownFullNames() {
+  const names = {};
+  for (const row of state.rows) {
+    if (row.fullName) names[row.username.toLowerCase()] = row.fullName;
+  }
+  return names;
+}
+
+/**
+ * Repaint everything that draws a name.
+ *
+ * Both lists, because either can be on screen and the other is one click away;
+ * the harvest status line reads the mask itself on its next write.
+ */
+function applyAnonMode() {
+  document.body.classList.toggle('is-anon', anon.isOn());
+  renderer.setMask(anon.mask());
+  recompute();
+  if (state.log.loaded) recomputeLog();
+}
+
+async function toggleAnonMode() {
+  // Applied first, and unconditionally: anon.toggle sets its own state before
+  // it goes anywhere near the tab, so the panel repaints whether or not the
+  // push lands. A throw below means the tab is out of step, not that this half
+  // failed — and the banner is what says so.
+  try {
+    await anon.toggle(knownFullNames());
+  } finally {
+    applyAnonMode();
+  }
 }
 
 // -------------------------------------------------------------- action log
@@ -676,13 +789,14 @@ function recomputeLog() {
     selected: state.log.selected,
     canFollow,
     // A run repaints this list from under itself — a follow-back's own writes
-    // land in the log, and a harvest pushes a note per account — so the freeze
-    // has to be reapplied on every render, not just when it starts. Through the
-    // same predicate syncActing uses rather than a second reading of the rule:
-    // the two drifted apart once already, and a repaint mid-harvest handed the
-    // checkboxes back.
-    inert: isActingOnLog(),
+    // land in the log, and a harvest pushes a note per account — so the claims
+    // have to be reapplied on every render, not just when they change. One map,
+    // read here and in `selectable` below: the two used to be separate readings
+    // of the same rule and drifted, and a repaint mid-harvest silently handed
+    // the checkboxes back.
+    claimed: state.claims.log,
     skipNotes: state.log.skipNotes,
+    mask: anon.mask(),
   });
 
   for (const tab of document.querySelectorAll('.log-tab')) {
@@ -711,79 +825,61 @@ function recomputeLog() {
   // By account, not by row: the same person can hold two followable rows, and
   // the selection is keyed on who they are. Noted rows come out — select-all
   // is the bulk gesture, and a row already handled elsewhere is exactly what
-  // you do not mean by "all". Ticking one by hand still works.
+  // you do not mean by "all". Ticking one by hand still works. Claimed rows come
+  // out too, and unlike a note that is not a preference: a job is holding them
+  // and they cannot be ticked at all.
   state.log.selectable = [...new Set(state.log.followable.map((record) => record.userId))]
-    .filter((id) => !state.log.skipNotes[id]);
+    .filter((id) => !state.log.skipNotes[id] && !state.claims.log.has(id));
 
   updateBulkBar();
 }
 
-/** Follow back everyone selected in the log. */
-async function runFollowBack() {
-  if (state.actionQueue) return;
-
+/** Queue a follow-back for everyone selected in the log. */
+async function enqueueFollowBack() {
   const targets = state.log.followable.filter((record) => state.log.selected.has(record.userId));
   // One row per account: the same person can appear twice if they were
   // accepted, unfollowed and accepted again.
-  const unique = [...new Map(targets.map((record) => [record.userId, record])).values()];
+  const unique = [...new Map(targets.map((record) => [record.userId, record])).values()]
+    .filter((record) => !state.claims.log.has(record.userId));
   if (unique.length === 0) return;
 
   const plural = unique.length === 1 ? '' : 's';
+  const waiting = jobs.jobs.length;
   const confirmed = await confirmAction({
     title: `Follow back ${unique.length} account${plural}?`,
-    body: `Follows ${unique.length} account${plural} you previously accepted. Private accounts become a follow request.`,
+    body: `Follows ${unique.length} account${plural} you previously accepted. Private accounts become a follow request.`
+      + queuedBehind(waiting),
   });
   if (!confirmed) return;
 
-  hideBanner();
+  // Out of the selection and onto the job, so the log's own select-all and the
+  // bulk bar both stop counting rows that are now somebody else's.
+  for (const record of unique) state.log.selected.delete(record.userId);
 
-  const queue = new ThrottledQueue({
-    items: unique,
-    pacing: PACING.moderate,
-    handler: async (record) => {
-      const result = await api.call('follow', { userId: record.userId });
-      if (!result?.ok) return result || { ok: false, error: 'no response' };
-
-      // Taken in hand rather than left to the storage change, so the row stops
-      // offering a follow-back even if the write to the log fails. They were
-      // followed either way, and the log failing is not their problem.
-      absorbLogRecords([logAction({ id: record.userId, username: record.username }, history.FOLLOW)]);
-      state.log.selected.delete(record.userId);
-      return result;
-    },
-    onProgress: ({ done, total }) => {
-      state.actionProgress = { label: `Following ${done} / ${total}…`, done, total };
-      syncRun();
-    },
-    onFinish: ({ halted, stopped, failures, done, total }) => {
-      state.actionQueue = null;
-      state.actionScope = null;
-      state.actionProgress = null;
-      syncRun();
-      syncActing();
-
-      if (halted) showBanner(`Stopped after ${done} of ${total} — Instagram returned "${halted}". Wait before retrying.`);
-      else if (stopped) setStatus(`Stopped after ${done} of ${total}.`);
-      else if (failures.length) setStatus(`Done, ${failures.length} failed.`);
-      // Nothing on a clean run: the rows below stop offering a follow-back,
-      // which is the same news said where it happened.
-      else setStatus('');
-
-      recomputeLog();
-    },
+  jobs.enqueue({
+    kind: 'followBack',
+    scope: 'log',
+    ids: unique.map((record) => record.userId),
+    // Carried on the job rather than looked up when it runs. A job can sit
+    // queued for minutes behind others, and in that time the log can be cleared,
+    // filtered or paged out from under the rows it is holding.
+    names: new Map(unique.map((record) => [record.userId, record.username])),
   });
+  recomputeLog();
+}
 
-  state.actionQueue = queue;
-  state.actionScope = 'log';
-  // Seeded before the first item rather than left to the first onProgress: at up
-  // to 3s per write, the meter would otherwise sit closed through the whole of
-  // the first one.
-  state.actionProgress = { label: `Following 0 / ${unique.length}…`, done: 0, total: unique.length };
-  syncRun();
-  syncActing();
-  updateBulkBar();
+/** One follow, plus the log record that stops the row offering it again. */
+async function followOnce(job, userId) {
+  const result = await api.call('follow', { userId });
+  if (!result?.ok) return result || { ok: false, error: 'no response' };
 
-  await queue.run();
+  // Taken in hand rather than left to the storage change, so the row stops
+  // offering a follow-back even if the write to the log fails. They were
+  // followed either way, and the log failing is not their problem.
+  const username = job.names?.get(userId) || '';
+  absorbLogRecords([logAction({ id: userId, username }, history.FOLLOW)]);
+  state.log.selected.delete(userId);
+  return result;
 }
 
 // --------------------------------------------------------------- bulk pass
@@ -1028,65 +1124,122 @@ async function actOnce(id, action) {
   };
 }
 
-async function runBulk(action) {
-  if (state.actionQueue) return;
+/** The one clause a confirm gains when the press will not act immediately. */
+function queuedBehind(count) {
+  return count === 0 ? '' : ` Queued behind ${count} operation${count === 1 ? '' : 's'}.`;
+}
 
-  const ids = [...state.selected].filter((id) => !state.doneIds.has(id));
+async function enqueueBulk(action) {
+  const ids = [...state.selected]
+    .filter((id) => !state.doneIds.has(id) && !state.claims.requests.has(id));
   if (ids.length === 0) return;
 
   const spec = ACTIONS[action];
   const plural = ids.length === 1 ? '' : 's';
+  const waiting = jobs.jobs.length;
   const confirmed = await confirmAction({
     title: `${spec.label} ${ids.length} request${plural}?`,
     body:
-      action === 'approveFollow'
+      (action === 'approveFollow'
         ? `Accept ${ids.length} request${plural} and follow each one back. Two writes per person, so it takes roughly twice as long as a plain accept.`
-        : `${spec.label} ${ids.length} of ${state.visible.length} shown, with the current filters applied.`,
+        : `${spec.label} ${ids.length} of ${state.visible.length} shown, with the current filters applied.`)
+      + queuedBehind(waiting),
     warn: action === 'ignore',
   });
   if (!confirmed) return;
 
+  // Out of the selection and onto the job. This one move is what queueing
+  // actually consists of: the bulk bar empties, those rows go inert under the
+  // job's claim, and every other row is free to be picked for the next one.
+  for (const id of ids) state.selected.delete(id);
+  renderer.setSelection(state.selected);
+
+  jobs.enqueue({ kind: action, scope: 'requests', ids });
+  updateBulkBar();
+}
+
+/**
+ * Perform one job. Handed to the JobList, which decides when — never more than
+ * one of these is in flight, whatever is queued behind it.
+ */
+function runJob(job) {
+  // Whatever the last run left standing is not about this one — and if it was a
+  // pause, this run only exists because it was resumed.
   hideBanner();
 
-  const queue = new ThrottledQueue({
-    items: ids,
-    pacing: PACING.moderate,
-    handler: (id) => actOnce(id, action),
-    onProgress: ({ done, total }) => {
-      state.actionProgress = { label: `${spec.gerund} ${done} / ${total}…`, done, total };
-      syncRun();
-    },
-    onFinish: ({ halted, stopped, failures, done, total }) => {
-      state.actionQueue = null;
-      state.actionScope = null;
-      state.actionProgress = null;
-      syncRun();
-      syncActing();
+  return new Promise((resolve) => {
+    const queue = new ThrottledQueue({
+      // A resumed job starts from what it still holds, not from what it was
+      // handed: the items it already got through are gone from `remaining`, and
+      // the one a block refused is still in it.
+      items: [...job.remaining],
+      pacing: PACING.moderate,
+      handler: async (id) => {
+        state.inFlightId = id;
+        syncClaims();
 
-      if (halted) showBanner(`Stopped after ${done} of ${total} — Instagram returned "${halted}". Wait before retrying.`);
-      else if (stopped) setStatus(`Stopped after ${done} of ${total}.`);
-      else if (failures.length) setStatus(`Done, ${failures.length} failed.`);
-      // A clean run says nothing: every row it touched marked itself and left
-      // the list, and the log holds the tally for as long as anyone wants it.
-      else setStatus('');
+        const result = job.scope === 'log'
+          ? await followOnce(job, id)
+          : await actOnce(id, job.kind);
 
-      // The pending list on Instagram's side has changed; drop the snapshot so
-      // the next Refresh refetches instead of resurrecting handled requests.
-      store.clearSnapshot();
-      recompute();
-    },
+        state.inFlightId = null;
+        // Attempted counts as handled, plain failures included — that is what
+        // the queue's own `failures` list has always meant. A block is the one
+        // outcome that leaves the id in, so a resumed job still holds the
+        // request Instagram would not take.
+        if (!result?.blocked && !result?.loggedOut) jobs.handled(job, id);
+        return result;
+      },
+      onProgress: () => {
+        syncRunStack();
+        syncClaims();
+      },
+      onFinish: (outcome) => {
+        job.stop = null;
+        state.inFlightId = null;
+        reportOutcome(job, outcome);
+        resolve(outcome);
+      },
+    });
+
+    job.stop = () => queue.stop();
+    syncRunStack();
+    syncClaims();
+    queue.run();
   });
+}
 
-  state.actionQueue = queue;
-  state.actionScope = 'requests';
-  // Seeded before the first item, as in runFollowBack — at up to 3s per write
-  // the meter would otherwise stay closed through the whole of the first one.
-  state.actionProgress = { label: `${spec.gerund} 0 / ${ids.length}…`, done: 0, total: ids.length };
-  syncRun();
-  syncActing();
-  updateBulkBar();
+/** What is left to say once a job's bar has gone. */
+function reportOutcome(job, { halted, stopped, failures = [] }) {
+  const done = jobs.done(job);
 
-  await queue.run();
+  if (halted) {
+    // Paused rather than stopped, and the wording has to carry that: the rows
+    // this job never reached are still held, and everything queued behind it is
+    // still queued. The banner is where the way back out lives.
+    showBanner(
+      `Paused after ${done} of ${job.total} — Instagram returned "${halted}". Wait a while, then resume.`,
+      { paused: true }
+    );
+  } else if (stopped) {
+    setStatus(`Stopped after ${done} of ${job.total}.`);
+  } else if (failures.length) {
+    setStatus(`Done, ${failures.length} failed.`);
+  } else {
+    // A clean run says nothing: every row it touched marked itself and left the
+    // list, and the log holds the tally for as long as anyone wants it.
+    setStatus('');
+  }
+
+  if (job.scope === 'log') {
+    recomputeLog();
+    return;
+  }
+
+  // The pending list on Instagram's side has changed; drop the snapshot so the
+  // next Refresh refetches instead of resurrecting handled requests.
+  store.clearSnapshot();
+  recompute();
 }
 
 function confirmAction({ title, body, warn }) {
@@ -1103,15 +1256,32 @@ function confirmAction({ title, body, warn }) {
 
 // ------------------------------------------------------------------ binding
 
+/**
+ * The mutuals menu, in the model's terms.
+ *
+ * Its values carry the comparison each option is labelled with, in the two
+ * forms the menu uses: "<10" is strict and steps in by one to reach the
+ * inclusive bounds applyFilters works in, while "10+" already is one. "0" is
+ * not a bound at all but its own predicate, and an enriched-only one: an
+ * absent social_context is not evidence of zero.
+ */
+function readMutualsFilter(value) {
+  const under = /^<(\d+)$/.exec(value);
+  const atLeast = /^(\d+)\+$/.exec(value);
+
+  let minMutuals = 0;
+  let maxMutuals = null;
+  if (atLeast) minMutuals = Number(atLeast[1]);
+  else if (under) maxMutuals = Number(under[1]) - 1;
+
+  return { minMutuals, maxMutuals, noMutuals: value === '0' };
+}
+
 function readFilters() {
   const rawMax = $('f-max-followers').value;
-  // "none" is its own predicate rather than a minimum, and is enriched-only:
-  // an absent social_context is not evidence of zero mutuals.
-  const mutuals = $('f-mutuals').value;
   state.filters = {
     onlyFollowing: $('f-following').checked,
-    minMutuals: mutuals === 'none' ? 0 : Number(mutuals),
-    noMutuals: mutuals === 'none',
+    ...readMutualsFilter($('f-mutuals').value),
     maxFollowers: rawMax === '' ? null : Number(rawMax),
     zeroPosts: $('f-zero-posts').checked,
     emptyBio: $('f-empty-bio').checked,
@@ -1182,7 +1352,9 @@ function bindLog() {
     if (!row) return;
 
     if (event.target.closest('[data-action="open"]')) {
-      return api.navigateToProfile(rowUsername(row)).catch(reportError);
+      const username = rowUsername(row);
+      if (!username) return undefined;
+      return api.navigateToProfile(username).catch(reportError);
     }
     if (!row.classList.contains('is-selectable')) return;
 
@@ -1215,7 +1387,7 @@ function bindLog() {
     recomputeLog();
   });
 
-  $('bulk-follow-back').addEventListener('click', () => runFollowBack());
+  $('bulk-follow-back').addEventListener('click', () => enqueueFollowBack());
 
   $('log-clear').addEventListener('click', async () => {
     const confirmed = await confirmAction({
@@ -1238,9 +1410,15 @@ function bindLog() {
   });
 }
 
-/** The username shown on a log row, read back off the rendered node. */
+/**
+ * The real username a log row stands for.
+ *
+ * Off `data-username`, not off the rendered text: what is rendered is whatever
+ * the naming mask produced, and under screenshot mode that is a pseudonym.
+ * Navigating to it would open an account that does not exist.
+ */
 function rowUsername(row) {
-  return row.querySelector('.log-user').textContent.replace(/^@/, '');
+  return row.dataset.username || '';
 }
 
 /**
@@ -1348,7 +1526,19 @@ function clampPopover(panel) {
 }
 
 function bind() {
+  runStack = new RunStack({
+    container: $('run-stack'),
+    // One button per bar, and which one it is follows from that bar's state —
+    // Stop on the running or paused job, Cancel on one still waiting. Both mean
+    // the same thing to the list: drop it and let its rows go.
+    onButton: (id) => {
+      if (id === EXTERNAL_BAR_ID) return state.external?.queue?.stop();
+      jobs.drop(id);
+    },
+  });
+
   renderer = new ListRenderer({
+    mask: anon.mask(),
     container: $('list'),
     sentinel: $('sentinel'),
     handlers: {
@@ -1415,6 +1605,17 @@ function bind() {
     $('spam-toggle').focus();
   });
 
+  // Screenshot mode. Matched on event.code because Option+S on macOS types
+  // "ß" — event.key would never be "s" for the combination that fires this.
+  // The panel has to hold focus for it, which is the trade for not spending a
+  // manifest command and a global binding on a mode only used while shooting.
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'KeyS' || !event.altKey) return;
+    if (!event.metaKey && !event.ctrlKey) return;
+    event.preventDefault();
+    toggleAnonMode().catch(reportError);
+  });
+
   $('sort').addEventListener('change', async () => {
     state.settings.sort = $('sort').value;
     await store.saveSettings(state.settings);
@@ -1435,13 +1636,14 @@ function bind() {
 
   $('load-batch').addEventListener('click', () => runHydrationBatch());
 
-  // A Stop per meter, each stopping the queue its own label is counting — all
-  // three can run at once, so one shared Stop would have to guess. Hydration's
-  // is unambiguous because nothing else reports beside it; the toolbar's follows
-  // the same precedence its label does, so it always means what is written next
-  // to it.
+  // A Stop per meter, each stopping the queue its own label is counting — there
+  // is never a shared one that would have to guess. Hydration's is unambiguous
+  // because nothing else reports beside it; the stack's live on the bars, one
+  // each, so they cannot mean anything but the line they sit on.
   $('stop-hydration').addEventListener('click', () => state.hydrationQueue?.stop());
-  $('run-stop').addEventListener('click', () => activeRun()?.queue.stop());
+
+  $('banner-resume').addEventListener('click', () => jobs.resume());
+  $('banner-cancel-all').addEventListener('click', () => jobs.cancelAll());
 
   bindLog();
 
@@ -1449,17 +1651,18 @@ function bind() {
     // Deselect clears the whole selection, not just what is shown: rows picked
     // under an earlier filter are still selected and still counted by the
     // toolbar, so leaving them behind would contradict the word "all".
-    const shownAll = state.visible.length > 0
-      && state.visible.every((row) => state.selected.has(row.id));
+    const selectable = selectableRows();
+    const shownAll = selectable.length > 0
+      && selectable.every((row) => state.selected.has(row.id));
     if (shownAll) state.selected.clear();
-    else for (const row of state.visible) state.selected.add(row.id);
+    else for (const row of selectable) state.selected.add(row.id);
 
     renderer.setSelection(state.selected);
     updateBulkBar();
   });
 
   for (const [buttonId, action] of Object.entries(BULK_BUTTONS)) {
-    $(buttonId).addEventListener('click', () => runBulk(action));
+    $(buttonId).addEventListener('click', () => enqueueBulk(action));
   }
 
   $('bulk-clear').addEventListener('click', () => {
@@ -1486,31 +1689,46 @@ function bind() {
     if (area === 'local') onLogShardChanged(changes);
   });
 
-  // An in-flight action queue is doing irreversible writes; make closing the
-  // panel mid-run a deliberate act rather than an accident.
+  // The pipeline is doing irreversible writes; make closing the panel mid-run a
+  // deliberate act rather than an accident. Anything queued counts, not just
+  // what is running — closing on a queue of three loses all three, and a paused
+  // one is the easiest of the lot to forget about.
   window.addEventListener('beforeunload', (event) => {
-    if (state.actionQueue) event.preventDefault();
+    if (jobs.busy) event.preventDefault();
   });
 
+  // #region harvest — build.js deletes this region from the store package
   // Deleting this call plus src/harvest/ removes the harvest feature entirely.
   // It reads the log selection through a closure and drives the meter through
   // externalRun rather than importing panel state, so nothing here depends on
   // the feature existing — mountHarvest defaults externalRun to a no-op if a
   // future caller omits it, so this call is not load-bearing either.
+  //
+  // That removal is what the store build does: `npm run build` strips both
+  // #region harvest blocks in this file, so the published package can ship
+  // without asking for the `downloads` permission the harvest needs.
   mountHarvest({
     selectedLogEntries: () =>
       state.log.visible.filter((record) => state.log.selected.has(record.userId)),
     confirmAction,
     externalRun,
     skipNotes,
+    // A getter, not the mask itself: the status line is written during a run,
+    // and the mode can be toggled while one is in flight.
+    mask: anon.mask,
   });
+  // #endregion harvest
 }
 
 async function init() {
   state.settings = await store.loadSettings();
   state.cache = await store.loadProfileCache();
+  // Before bind(), so the renderer is constructed with the right mask rather
+  // than painting the real names once and correcting itself.
+  await anon.load();
 
   bind();
+  document.body.classList.toggle('is-anon', anon.isOn());
   $('sort').value = state.settings.sort;
   setMode('requests');
 

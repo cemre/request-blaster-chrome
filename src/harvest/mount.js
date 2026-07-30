@@ -5,6 +5,7 @@
 // beyond the mountHarvest() call. Deleting that call plus this directory
 // removes the feature entirely.
 
+import { IDENTITY_MASK } from '../alias.js';
 import { suppressDownloadUi } from './batch.js';
 import { collectCandidates, runHarvest } from './harvest.js';
 import { candidatesFromLogEntries, harvestNotes } from './model.js';
@@ -42,10 +43,10 @@ const STYLES = `
   body[data-mode='requests'] .harvest { display: none !important; }
 
   /* sidepanel.css lights up the row a bulk action is currently writing to
-     (body.is-acting-requests .row.is-busy) against its dimmed neighbours; the
-     log has no equivalent, and this run acts on the log. Kept here rather than
-     added to that shared rule so it leaves with the feature. */
-  body.is-acting-log #log-list .log-row.is-busy { opacity: 1; }
+     (.row.is-claimed.is-busy) against its dimmed neighbours; the log has no
+     equivalent, and this run acts on the log. Kept here rather than added to
+     that shared rule so it leaves with the feature. */
+  #log-list .log-row.is-claimed.is-busy { opacity: 1; }
 `;
 
 // Module-level rather than closed over some caller's state object: the
@@ -62,12 +63,8 @@ function injectStyles() {
 }
 
 // Stop normally lives on the shared meter, which is reachable from anywhere in
-// the panel rather than only from this row in the Log tab. The copy here is for
-// the one case the meter cannot cover: the action queue outranks this run, so a
-// harvest started during an accept run has no meter and therefore no Stop for
-// as long as that run lasts — a batch of 400 accounts, hours of work, held
-// uncancellable behind ten minutes of accepting. Hidden whenever the meter is
-// this run's own, so there is never a second Stop beside the first.
+// the panel rather than only from this row in the Log tab. This run gets a bar
+// in that stack like any other, so it needs no Stop of its own.
 function buildMarkup() {
   const el = document.createElement('div');
   el.id = 'harvest';
@@ -79,7 +76,6 @@ function buildMarkup() {
         <input type="checkbox" id="harvest-all">
         <span>All followers</span>
       </label>
-      <button id="harvest-stop" class="btn btn-small btn-quiet" hidden>Stop</button>
       <button id="harvest-start" class="btn btn-small" title="Fetch profile data and contact sheets into your Downloads folder">Harvest</button>
     </div>`;
   return el;
@@ -195,36 +191,10 @@ async function refreshNotes(skipNotes, ids) {
   }
 }
 
-function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes) {
+function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes, mask) {
   function setHarvestStatus(message) {
     $('harvest-status').textContent = message;
   }
-
-  // Whether the shared meter is currently reporting this run, pushed in by the
-  // panel. False while something outranks us, and false again once we finish.
-  let meterHeld = false;
-
-  /** The local Stop exists only for a run the meter's own Stop cannot reach. */
-  function syncStopButton() {
-    const button = $('harvest-stop');
-    if (button) button.hidden = !activeHarvest || meterHeld;
-  }
-
-  // Both are needed. onMeterChange reports transitions, so it says nothing at
-  // all about a run that starts without the meter and never gains it before it
-  // ends — which is the very case this button exists for.
-  externalRun.onMeterChange = (held) => {
-    meterHeld = held;
-    syncStopButton();
-  };
-
-  $('harvest-stop').addEventListener('click', () => {
-    log('stopped from the harvest row');
-    activeHarvest?.queue.stop();
-    // The queue finishes the account in hand before it breaks, which is a
-    // couple of seconds of nothing if this does not say so.
-    setHarvestStatus('Stopping…');
-  });
 
   // The buttons are bound FIRST, before anything optional. A previous revision
   // ran the label updater above this and a throw in it left the button on
@@ -272,7 +242,7 @@ function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes)
         onProgress: ({ done, total, item, result }) => {
           // The status line keeps naming the account — the meter's label, below,
           // has no room for a username once the counter is in it.
-          setHarvestStatus(`${done} / ${total} — @${item.username}`);
+          setHarvestStatus(`${done} / ${total} — @${mask().username(item.username)}`);
           // Phrased like the action and hydration queues' own labels
           // ("Rejecting 4 / 10…", "Enriching 40 / 100…") so the meter reads as
           // one running thing regardless of which queue is behind it.
@@ -291,7 +261,6 @@ function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes)
           // Cleared in the same statement that restores the rest of the idle
           // UI: the meter reports an in-flight run, and there no longer is one.
           externalRun.finish();
-          syncStopButton();
           clearActiveLogRow();
 
           // Once at the end regardless of what the per-account refresh above
@@ -329,18 +298,23 @@ function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes)
       // has — can reach this run; seeded at 0/total for the same reason the
       // action and hydration queues seed themselves before their first tick,
       // rather than leaving the meter closed for the whole of a slow first item.
+      //
+      // The ids are what this run captured. The panel marks those log rows as
+      // spoken for and leaves the rest of the log alone — this used to freeze
+      // the whole list, on the argument that a queue holds the rows it started
+      // with, which is true of these rows and of no others. Most of an
+      // all-followers sweep matches no log row at all; those ids simply claim
+      // nothing.
       externalRun.start(activeHarvest.queue, {
         label: `Harvesting 0 / ${candidates.length}…`,
         done: 0,
         total: candidates.length,
-      });
-      syncStopButton();
+      }, candidates.map((candidate) => candidate.pk));
       log('running. batch', activeHarvest?.batchId);
     } catch (err) {
       logError('failed:', err);
       setHarvestStatus(`Failed: ${err.message}`);
       $('harvest-start').disabled = false;
-      syncStopButton();
     }
   });
 
@@ -405,17 +379,13 @@ function bindLifecycle() {
  * @param confirmAction the panel's in-document dialog. Passed in for the same
  *   reason, and required: window.confirm is silently suppressed in a side
  *   panel, so there is no usable fallback to default to.
- * @param externalRun `{ start(queue, progress), update(progress), finish() }`
- *   folding this run into the panel's shared toolbar meter, plus an
- *   `onMeterChange` slot this feature fills in to be told whether the meter is
- *   currently reporting its run. Optional and defaulted to a no-op below, so
- *   this feature still mounts — with its own status line, and a Stop that is
- *   then always on screen because nothing ever claims to hold the meter — if a
- *   caller does not supply one.
- * @param skipNotes `{ set(byId) }`, where `byId` is `{ [userId]: { label, date } }`.
- *   What this feature tells the log about accounts it has already written to a
- *   batch: the label takes the row's action chip, the date goes in its tooltip,
- *   and select-all leaves the row alone. Optional and
+ * @param externalRun `{ start(queue, progress, ids), update(progress), finish() }`
+ *   folding this run into the panel's shared toolbar meter. Optional and
+ *   defaulted to a no-op below, so this feature still mounts — with its own
+ *   status line and no shared meter or Stop — if a caller does not supply one.
+ * @param skipNotes `{ set(byId) }`, where `byId` is `{ [userId]: note }`. What
+ *   this feature tells the log about accounts it has already written to a
+ *   batch: the row shows the note and select-all leaves it alone. Optional and
  *   defaulted like externalRun — without it the marks are simply invisible,
  *   and the "All followers" sweep still skips them, since that has always been
  *   decided from storage rather than from the panel.
@@ -428,6 +398,9 @@ export function mountHarvest({
   },
   externalRun = { start() {}, update() {}, finish() {} },
   skipNotes = { set() {} },
+  // The panel's naming mask, as a getter — the status line below names the
+  // account being worked, and screenshot mode can be toggled mid-run.
+  mask = () => IDENTITY_MASK,
 } = {}) {
   const anchor = document.querySelector('.log-controls');
   if (!anchor) {
@@ -455,7 +428,7 @@ export function mountHarvest({
     .catch((err) => logError('could not load the harvested marks:', err));
 
   try {
-    bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes);
+    bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes, mask);
     bindLifecycle();
   } catch (err) {
     // A throw here leaves a button on screen wired to nothing, which is the

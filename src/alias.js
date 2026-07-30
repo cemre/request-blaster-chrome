@@ -1,0 +1,161 @@
+// alias.js — stable fake identities for screenshot mode. Pure: no chrome.*, no DOM.
+//
+// Loaded three ways: as an ES module by the panel, as a dynamic import by
+// anon-content.js on the Instagram tab (hence the web_accessible_resources
+// entry in the manifest), and by `node --test`. Nothing here may reach for a
+// browser global, or the tab copy stops loading.
+//
+// The map is keyed on the **username**, not the user id, and that is the one
+// decision the whole feature rests on. The panel knows both; the Instagram tab
+// only ever learns handles, off `href="/handle/"`. Keyed on anything else the
+// two sides would name the same person differently inside a single screenshot.
+// Keyed on the handle they cannot: the persona is a pure function of it, so
+// both sides derive the same answer with no shared state and no handshake.
+
+// 98 x 72 = 7,056 personas before handle styling. A screenshot shows on the
+// order of twenty rows, where the chance of two of them colliding is ~3%.
+// Worth knowing rather than worth engineering away — Instagram has two
+// Alex Chens too.
+const GIVEN = [
+  'Aaron', 'Adele', 'Adrian', 'Aisha', 'Alba', 'Alina', 'Amara', 'Amir',
+  'Anders', 'Anika', 'Antonio', 'Ari', 'Astrid', 'Ayla', 'Beatriz', 'Bilal',
+  'Bruno', 'Caleb', 'Camila', 'Carmen', 'Cassian', 'Cecilia', 'Chidi', 'Clara',
+  'Cyrus', 'Dalia', 'Damian', 'Daniela', 'Dario', 'Delphine', 'Dimitri', 'Eda',
+  'Elena', 'Eli', 'Elsa', 'Emeka', 'Emilio', 'Esther', 'Ezra', 'Farah',
+  'Felix', 'Fiona', 'Gabriel', 'Georgia', 'Gideon', 'Greta', 'Hana', 'Harun',
+  'Hugo', 'Idris', 'Ilona', 'Imani', 'Ines', 'Iris', 'Isaac', 'Ivo',
+  'Jonah', 'Jordan', 'Josefina', 'Julius', 'Kaia', 'Kamil', 'Karim', 'Katya',
+  'Kenji', 'Lachlan', 'Laila', 'Leon', 'Lila', 'Linnea', 'Lucia', 'Malik',
+  'Marek', 'Mateo', 'Maya', 'Micah', 'Milena', 'Nadia', 'Nils', 'Noor',
+  'Oona', 'Orson', 'Paloma', 'Petra', 'Rafael', 'Ravi', 'Reza', 'Rosa',
+  'Sadie', 'Samir', 'Selin', 'Simone', 'Sofia', 'Tariq', 'Theo', 'Vera',
+  'Yusuf', 'Zara',
+];
+
+const FAMILY = [
+  'Abbott', 'Adeyemi', 'Alvarez', 'Andersen', 'Bakker', 'Baptiste', 'Beaumont',
+  'Bennett', 'Blackwood', 'Bright', 'Calder', 'Castillo', 'Chen', 'Cortez',
+  'Dalgaard', 'Delaney', 'Demir', 'Duarte', 'Eriksen', 'Falk', 'Ferreira',
+  'Fontaine', 'Gallagher', 'Garrido', 'Halvorsen', 'Hartley', 'Hassan',
+  'Hayashi', 'Ibrahim', 'Ivanov', 'Kallio', 'Karlsen', 'Keller', 'Khoury',
+  'Kowalski', 'Lindqvist', 'Lombardi', 'Maddox', 'Marchetti', 'Mbeki',
+  'Mercer', 'Moreau', 'Nakamura', 'Navarro', 'Nowak', 'Okafor', 'Oduya',
+  'Pereira', 'Petrov', 'Quintero', 'Radic', 'Ramsey', 'Reeves', 'Rinaldi',
+  'Rosales', 'Sandoval', 'Sato', 'Sinclair', 'Solberg', 'Sorensen', 'Stavros',
+  'Tanaka', 'Thorne', 'Vaccaro', 'Valdez', 'Vargas', 'Vasquez', 'Whitfield',
+  'Wilder', 'Yilmaz', 'Zabala', 'Zhao',
+];
+
+/**
+ * How a persona spells its own handle. Real handles are not uniform and a
+ * column of `first.last` twenty rows deep reads as generated data, which is
+ * the one thing a store screenshot must not look like.
+ */
+const HANDLE_STYLES = [
+  (given, family) => `${given}.${family}`,
+  (given, family) => `${given}${family}`,
+  (given, family) => `${given}_${family}`,
+  (given, family) => `${given[0]}${family}`,
+  (given, family) => `${family}.${given}`,
+  (given, family, salt) => `${given}${family[0]}${(salt % 90) + 10}`,
+];
+
+/** Paths that look like `/word/` but are not profiles. */
+const NON_PROFILE_SEGMENTS = new Set([
+  'explore', 'direct', 'reels', 'stories', 'p', 'accounts', 'your_activity',
+  'notifications', 'legal', 'about', 'challenge', 'tv', 'ap', 'emails',
+  'session', 'graphql', 'api', 'web', 'developer', 'directory', 'privacy',
+  'terms', 'settings', 'lite', 'igtv', 'favorites', 'archive',
+]);
+
+/** FNV-1a, 32-bit. Small, dependency-free, and stable across engines. */
+function hash32(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+// Four indices are drawn per persona and they must not move together, or
+// `given` and `family` would advance in lockstep and the pool would collapse
+// from 7,056 pairs to 98. Salting re-runs the hash instead of slicing one.
+const pick = (key, salt) => hash32(`${salt}\x00${key}`);
+
+export function normalizeHandle(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/^@+/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+const personaCache = new Map();
+
+/**
+ * The fake identity for one real handle.
+ *
+ * @returns {{ username: string, fullName: string }} or null for empty input.
+ */
+export function personaFor(handle) {
+  const key = normalizeHandle(handle);
+  if (!key) return null;
+
+  const cached = personaCache.get(key);
+  if (cached) return cached;
+
+  const given = GIVEN[pick(key, 'given') % GIVEN.length];
+  const family = FAMILY[pick(key, 'family') % FAMILY.length];
+  const style = HANDLE_STYLES[pick(key, 'style') % HANDLE_STYLES.length];
+
+  const persona = {
+    username: style(given.toLowerCase(), family.toLowerCase(), pick(key, 'salt')),
+    fullName: `${given} ${family}`,
+  };
+
+  personaCache.set(key, persona);
+  return persona;
+}
+
+/**
+ * The handle a URL path names, or null when the path is not a profile.
+ *
+ * Instagram links every account as `/handle/`, which is what makes the tab
+ * side of this feature tractable: the href carries the identity, so the text
+ * inside the link does not have to be guessed at.
+ */
+export function handleFromPath(path) {
+  if (typeof path !== 'string') return null;
+  const match = /^\/([A-Za-z0-9._]{1,30})\/?$/.exec(path);
+  if (!match) return null;
+
+  const handle = match[1].toLowerCase();
+  if (NON_PROFILE_SEGMENTS.has(handle)) return null;
+  // A bare dot run is a path artefact, never a username.
+  if (!/[a-z0-9]/.test(handle)) return null;
+  return handle;
+}
+
+// ------------------------------------------------------------------- masks
+//
+// Renderers take one of these rather than importing the engine directly, so
+// `render.js` never learns whether the mode exists and stays testable against
+// the identity case.
+
+export const IDENTITY_MASK = {
+  on: false,
+  username: (real) => real,
+  fullName: (realHandle, realName) => realName,
+};
+
+export function createMask() {
+  return {
+    on: true,
+    username: (real) => personaFor(real)?.username ?? real,
+    /**
+     * Keyed on the handle so a row's name and handle describe one person, but
+     * gated on the real name: a row Instagram gave no display name for must
+     * not grow one, or the mode invents UI that does not exist.
+     */
+    fullName: (realHandle, realName) =>
+      (realName ? personaFor(realHandle)?.fullName ?? realName : ''),
+  };
+}
