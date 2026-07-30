@@ -6,7 +6,13 @@
 // when Chrome tears the worker down after 30s of idle.
 
 const IG_MATCH = '*://*.instagram.com/*';
-const CONTENT_FILES = ['content.js', 'banner.js'];
+
+// Read from the manifest rather than listed here, the same way api.js does it.
+// Hardcoded, this list had already fallen a script behind: harvest-content.js
+// was in the manifest and not here, so a tab that predated the extension got a
+// partial injection and one feature's ops answered "unknown op" forever.
+const CONTENT_FILES =
+  chrome.runtime.getManifest().content_scripts?.[0]?.js || ['content.js', 'banner.js'];
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })

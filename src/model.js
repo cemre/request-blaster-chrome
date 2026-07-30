@@ -194,8 +194,12 @@ export function applyFilters(rows, filters) {
     if (filters.minMutuals > 0 && (row.mutuals === null || row.mutuals < filters.minMutuals)) return false;
     if (filters.defaultPic && !row.defaultPic) return false;
 
+    // `alias`/`aliasName` are only set while screenshot mode is on (see
+    // panel.js recompute), and searching them as well as the real values is
+    // what keeps the search box usable when the list is showing pseudonyms.
     if (needle) {
-      const haystack = `${row.username} ${row.fullName}`.toLowerCase();
+      const haystack =
+        `${row.username} ${row.fullName} ${row.alias || ''} ${row.aliasName || ''}`.toLowerCase();
       if (!haystack.includes(needle)) return false;
     }
 

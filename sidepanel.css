@@ -770,6 +770,23 @@ body.is-acting .log-row [data-action='open'] { pointer-events: auto; }
   border: 1px solid var(--border);
 }
 
+/* Screenshot mode (Cmd+Alt+S). Names go through a mask the renderer holds, but
+   a face is not a string, so the one thing this feature does in CSS is take
+   the profile pictures out. A rule rather than a filter set on the <img> in
+   script, so there is nothing to undo — the class goes and the photos are back.
+
+   clip-path, not the border-radius already on .avatar: a filter spreads past
+   the element's box and the radius is applied before it, so the blur alone
+   leaves a square halo around every circle. Clipping happens after filtering,
+   which is what actually holds the shape. The scale then pushes the transparent
+   edge outside the clip, so the rim samples the photo rather than fading into
+   the panel. */
+body.is-anon .avatar {
+  filter: blur(6px);
+  clip-path: circle(50%);
+  transform: scale(1.12);
+}
+
 .row-main { min-width: 0; }
 
 .row-title {

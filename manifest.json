@@ -22,10 +22,15 @@
   },
 
   "content_scripts": [{
-    "js": [ "content.js", "banner.js", "harvest-content.js" ],
+    "js": [ "content.js", "banner.js", "harvest-content.js", "anon-content.js" ],
     "matches": [ "*://*.instagram.com/*" ],
     "run_at": "document_idle",
     "all_frames": false
+  }],
+
+  "web_accessible_resources": [{
+    "resources": [ "src/alias.js" ],
+    "matches": [ "*://*.instagram.com/*" ]
   }],
 
   "action": {
