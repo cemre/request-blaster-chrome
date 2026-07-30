@@ -42,10 +42,10 @@ const STYLES = `
   body[data-mode='requests'] .harvest { display: none !important; }
 
   /* sidepanel.css lights up the row a bulk action is currently writing to
-     (body.is-acting .row.is-busy) against its dimmed neighbours; the log has
-     no equivalent, and this run acts on the log. Kept here rather than added
-     to that shared rule so it leaves with the feature. */
-  body.is-acting #log-list .log-row.is-busy { opacity: 1; }
+     (.row.is-claimed.is-busy) against its dimmed neighbours; the log has no
+     equivalent, and this run acts on the log. Kept here rather than added to
+     that shared rule so it leaves with the feature. */
+  #log-list .log-row.is-claimed.is-busy { opacity: 1; }
 `;
 
 // Module-level rather than closed over some caller's state object: the
@@ -296,11 +296,18 @@ function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes)
       // has — can reach this run; seeded at 0/total for the same reason the
       // action and hydration queues seed themselves before their first tick,
       // rather than leaving the meter closed for the whole of a slow first item.
+      //
+      // The ids are what this run captured. The panel marks those log rows as
+      // spoken for and leaves the rest of the log alone — this used to freeze
+      // the whole list, on the argument that a queue holds the rows it started
+      // with, which is true of these rows and of no others. Most of an
+      // all-followers sweep matches no log row at all; those ids simply claim
+      // nothing.
       externalRun.start(activeHarvest.queue, {
         label: `Harvesting 0 / ${candidates.length}…`,
         done: 0,
         total: candidates.length,
-      });
+      }, candidates.map((candidate) => candidate.pk));
       log('running. batch', activeHarvest?.batchId);
     } catch (err) {
       logError('failed:', err);
@@ -370,7 +377,7 @@ function bindLifecycle() {
  * @param confirmAction the panel's in-document dialog. Passed in for the same
  *   reason, and required: window.confirm is silently suppressed in a side
  *   panel, so there is no usable fallback to default to.
- * @param externalRun `{ start(queue, progress), update(progress), finish() }`
+ * @param externalRun `{ start(queue, progress, ids), update(progress), finish() }`
  *   folding this run into the panel's shared toolbar meter. Optional and
  *   defaulted to a no-op below, so this feature still mounts — with its own
  *   status line and no shared meter or Stop — if a caller does not supply one.

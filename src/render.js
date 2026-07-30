@@ -35,7 +35,7 @@ export class ListRenderer {
     this.selected = new Set();
     this.rendered = 0;
     this.nodesById = new Map();
-    this.inert = false;
+    this.claims = new Map();
 
     this.observer = new IntersectionObserver(
       (entries) => {
@@ -77,20 +77,60 @@ export class ListRenderer {
   }
 
   /**
-   * Freeze selection while a write queue runs.
+   * The rows a queue has laid claim to, as `Map<id, label>`.
    *
-   * CSS dims the rows and takes their pointer events, but that stops the mouse
-   * only — Tab still reaches a checkbox and Space still ticks it. The disabled
-   * attribute is the part that actually holds, so it is set here rather than
-   * left to the stylesheet, and `inert` is remembered for rows the scroller
+   * This is what replaced freezing the whole list: only the rows some job is
+   * actually holding go inert, so a second selection can be built out of the
+   * rest while the first is still running.
+   *
+   * CSS dims a claimed row and takes its pointer events, but that stops the
+   * mouse only — Tab still reaches a checkbox and Space still ticks it. The
+   * disabled attribute is the part that actually holds, so it is set here rather
+   * than left to the stylesheet, and the map is remembered for rows the scroller
    * mounts partway through a run.
+   *
+   * A null label means "claimed, but leave the chip alone". The row being
+   * written to right now is claimed and already carries `Accepting…` from
+   * markRow; an unrelated repaint must not paint over that.
    */
-  setInert(inert) {
-    if (this.inert === inert) return;
-    this.inert = inert;
-    for (const node of this.nodesById.values()) {
-      const checkbox = node.querySelector('.row-check');
-      if (checkbox) checkbox.disabled = inert;
+  setClaims(claims) {
+    this.claims = claims;
+    for (const [id, node] of this.nodesById) this.applyClaim(id, node);
+  }
+
+  /** The status column, opened on demand — rows carry no buttons to fill it. */
+  stateChip(node) {
+    let chip = node.querySelector('.row-state');
+    if (!chip) {
+      chip = el('div', 'row-state');
+      node.appendChild(chip);
+    }
+    node.classList.add('has-state');
+    return chip;
+  }
+
+  applyClaim(id, node) {
+    const claimed = this.claims.has(id);
+    const checkbox = node.querySelector('.row-check');
+    if (checkbox) checkbox.disabled = claimed;
+    node.classList.toggle('is-claimed', claimed);
+
+    const label = claimed ? this.claims.get(id) : null;
+    if (label) {
+      this.stateChip(node).textContent = label;
+      node.dataset.chip = 'claim';
+      return;
+    }
+
+    // A claim ending without the row being actioned — a cancelled job — has to
+    // take its chip with it, or the row goes back to the list still labelled
+    // with something that is no longer going to happen. A chip markRow wrote is
+    // left alone: that row's claim ended because it was handled, and it is on
+    // its way out with "Rejected" on it.
+    if (!claimed && node.dataset.chip === 'claim') {
+      node.querySelector('.row-state')?.remove();
+      node.classList.remove('has-state');
+      delete node.dataset.chip;
     }
   }
 
@@ -139,16 +179,12 @@ export class ListRenderer {
     const node = this.nodesById.get(id);
     if (!node) return;
     node.classList.remove('is-accepted', 'is-rejected', 'is-failed', 'is-busy');
-    node.classList.add(`is-${state}`, 'has-state');
+    node.classList.add(`is-${state}`);
 
-    let chip = node.querySelector('.row-state');
-    if (!chip) {
-      // Rows carry no buttons, so the status column only exists once there is
-      // something to say — `has-state` opens the grid track for it.
-      chip = el('div', 'row-state');
-      node.appendChild(chip);
-    }
-    chip.textContent = message;
+    this.stateChip(node).textContent = message;
+    // Claimed by a job and now being written to. Marked so a later claim sync
+    // knows this chip is the live one and leaves it standing.
+    node.dataset.chip = 'state';
   }
 
   removeRow(id) {
@@ -166,7 +202,6 @@ export class ListRenderer {
     checkbox.type = 'checkbox';
     checkbox.className = 'row-check';
     checkbox.checked = this.selected.has(row.id);
-    checkbox.disabled = this.inert;
     checkbox.setAttribute('aria-label', `Select ${row.username}`);
     node.appendChild(checkbox);
 
@@ -216,7 +251,130 @@ export class ListRenderer {
     // fetched and cached — the "Empty bio" spam filter reads it.
     node.appendChild(main);
 
+    // Last, so a row the scroller mounts into a run in progress comes up already
+    // inert and already labelled rather than live for a frame.
+    this.applyClaim(row.id, node);
+
     return node;
+  }
+}
+
+// --------------------------------------------------------------- run stack
+
+/** One trailing control per bar, so a bar never has to be read for which is which. */
+function barButton(text) {
+  const node = el('button', 'btn btn-small btn-quiet meter-stop', text);
+  node.type = 'button';
+  node.dataset.jobButton = '';
+  return node;
+}
+
+/**
+ * A running or paused job: the full meter, unchanged from when the toolbar could
+ * only hold one. That is deliberate — a single running job is still the common
+ * case and it should look exactly as it always has.
+ */
+function buildMeterBar(bar) {
+  const node = el('div', 'run-progress');
+  node.dataset.job = String(bar.id);
+  node.dataset.kind = 'meter';
+
+  node.appendChild(el('div', 'run-fill'));
+
+  // The line twice: once in --text over the card, once in --primary-text clipped
+  // to the fill. Only the first is exposed; the second is the same words in
+  // another colour, and both are written in one statement below so they cannot
+  // drift and show a seam at the fill's edge.
+  for (const knockout of [false, true]) {
+    const line = el('div', knockout ? 'run-line run-line-knockout' : 'run-line');
+    if (knockout) line.setAttribute('aria-hidden', 'true');
+    line.appendChild(el('span', 'spinner spinner-inline'));
+    line.appendChild(el('span', 'run-label run-text'));
+    node.appendChild(line);
+  }
+
+  node.appendChild(barButton('Stop'));
+  return node;
+}
+
+/**
+ * A job still waiting its turn: one quiet line and a Cancel.
+ *
+ * No fill and no spinner, because 0% and "not moving" is all either could ever
+ * say until it starts — and at 260px three empty meters is most of the panel.
+ */
+function buildQueuedBar(bar) {
+  const node = el('div', 'run-queued');
+  node.dataset.job = String(bar.id);
+  node.dataset.kind = 'queued';
+  node.appendChild(el('span', 'run-label run-text'));
+  node.appendChild(barButton('Cancel'));
+  return node;
+}
+
+function updateBar(node, bar) {
+  for (const label of node.querySelectorAll('.run-label')) label.textContent = bar.label;
+  node.classList.toggle('is-paused', bar.state === 'paused');
+  node.style.setProperty('--run-pct', `${bar.pct}%`);
+
+  const button = node.querySelector('[data-job-button]');
+  if (button) button.textContent = bar.state === 'queued' ? 'Cancel' : 'Stop';
+}
+
+/**
+ * The toolbar's stack of bars — one per queued, running or paused operation.
+ *
+ * Reconciled rather than rebuilt, keyed on job id. Rebuilding on every tick would
+ * restart each spinner and kill the fill's width transition, which between ticks
+ * is the entire difference between a bar that looks alive and one that looks hung.
+ */
+export class RunStack {
+  /** @param onButton (jobId) => void — Stop on a running bar, Cancel on a queued one. */
+  constructor({ container, onButton }) {
+    this.container = container;
+    this.nodes = new Map();
+
+    container.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-job-button]');
+      if (!button) return;
+      onButton(Number(button.closest('[data-job]').dataset.job));
+    });
+  }
+
+  render(bars) {
+    const seen = new Set();
+    let previous = null;
+
+    for (const bar of bars) {
+      seen.add(bar.id);
+      const kind = bar.state === 'queued' ? 'queued' : 'meter';
+      let node = this.nodes.get(bar.id);
+
+      // A job promoted from queued to running changes shape, so its node is
+      // replaced rather than restyled — the meter's fill and knockout layers
+      // have no counterpart in the one-line form.
+      if (!node || node.dataset.kind !== kind) {
+        const replacement = kind === 'queued' ? buildQueuedBar(bar) : buildMeterBar(bar);
+        if (node) node.replaceWith(replacement);
+        else this.container.appendChild(replacement);
+        node = replacement;
+        this.nodes.set(bar.id, node);
+      }
+
+      updateBar(node, bar);
+
+      // Order moves under us — the head finishes and the next takes its place —
+      // so each bar is walked into position rather than assumed to be in it.
+      const expected = previous ? previous.nextSibling : this.container.firstChild;
+      if (node !== expected) this.container.insertBefore(node, expected);
+      previous = node;
+    }
+
+    for (const [id, node] of this.nodes) {
+      if (seen.has(id)) continue;
+      node.remove();
+      this.nodes.delete(id);
+    }
   }
 }
 
@@ -235,9 +393,12 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute:
  * do not already follow, since following back is the only thing you can do
  * from here.
  *
- * `inert` freezes the selection while a follow-back run is in flight. It has to
- * be passed in rather than left to CSS because a storage change can repaint this
- * list mid-run, and the rebuilt checkboxes would come back enabled.
+ * `claimed` is `Map<userId, label>` for the rows some job is holding — a queued
+ * or running follow-back, or a harvest. Those rows go inert and say what is
+ * coming; the rest of the log stays live, so the next selection can be built
+ * while this one runs. It has to be passed in rather than left to CSS because a
+ * storage change can repaint this list mid-run — a follow-back's own writes land
+ * in the log — and the rebuilt checkboxes would come back enabled.
  *
  * `skipNotes` is `{ [userId]: note }` for rows an outside feature has already
  * handled — the note is rendered under the username and the row is left out of
@@ -247,7 +408,7 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute:
  * ticking by default, not that it cannot be ticked.
  */
 export function renderLog(container, records, {
-  now, selected, canFollow, inert = false, skipNotes = {},
+  now, selected, canFollow, claimed = new Map(), skipNotes = {},
 }) {
   container.textContent = '';
   const fragment = document.createDocumentFragment();
@@ -260,13 +421,17 @@ export function renderLog(container, records, {
       row.dataset.id = record.userId;
       row.dataset.at = String(record.at);
 
+      const claim = claimed.get(record.userId);
+      const isClaimed = claimed.has(record.userId);
+      if (isClaimed) row.classList.add('is-claimed');
+
       if (canFollow(record)) {
         row.classList.add('is-selectable');
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.className = 'row-check log-check';
         checkbox.checked = selected.has(record.userId);
-        checkbox.disabled = inert;
+        checkbox.disabled = isClaimed;
         checkbox.setAttribute('aria-label', `Select ${record.username}`);
         row.appendChild(checkbox);
         if (selected.has(record.userId)) row.classList.add('is-selected');
@@ -287,7 +452,10 @@ export function renderLog(container, records, {
       // Its own line under the username rather than a fifth column. The panel
       // is dragged to ~260px beside Instagram, where a row already spends its
       // width on the time, the username and the action chip — a note inline
-      // would leave the username four characters wide.
+      // would leave the username four characters wide. The claim goes first
+      // when there is one: it is the live state, and the note is history.
+      if (claim) row.appendChild(el('span', 'log-note log-claim', claim));
+
       const note = skipNotes[record.userId];
       if (note) row.appendChild(el('span', 'log-note', note));
 

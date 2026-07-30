@@ -55,8 +55,14 @@
   </div>
 </header>
 
+<!-- Resume and Cancel all appear together, and only for a pipeline Instagram
+     paused. Dismiss goes while they are up: this banner is then the only thing
+     on screen offering to restart the queued work, and a dismissible one would
+     leave that work stranded with no way back to it. -->
 <div id="banner" class="banner" hidden>
   <span id="banner-text"></span>
+  <button id="banner-resume" class="icon-btn" hidden>Resume</button>
+  <button id="banner-cancel-all" class="icon-btn" hidden>Cancel all</button>
   <button id="banner-retry" class="icon-btn" hidden>Retry</button>
   <button id="banner-dismiss" class="icon-btn">Dismiss</button>
 </div>
@@ -223,31 +229,18 @@
 <!-- Acting is bulk-only, so the controls live in one floating bar over the
      list rather than repeating on every row. -->
 <div id="toolbar" class="toolbar" hidden>
-  <!-- The bar is the progress meter: --run-pct drives both the fill's width and
-       the knockout layer's clip, so the coloured text can never disagree with
-       the colour behind it. The line is rendered twice for that reason — once in
-       --text over the card, once in --primary-text clipped to the fill. Only the
-       first is exposed; the second is the same words in another colour.
+  <!-- One bar per queued, running or paused operation, built in render.js by
+       RunStack — the count is not known here, since you can go on queueing while
+       something runs.
 
-       Shared by both queues. Whichever is running fills this in; when both are,
-       the action wins, because it is the one writing to Instagram. -->
-  <div id="run-progress" class="run-progress" hidden>
-    <div class="run-fill"></div>
-
-    <div class="run-line">
-      <span class="spinner spinner-inline"></span>
-      <span id="run-label"></span>
-    </div>
-
-    <div class="run-line run-line-knockout" aria-hidden="true">
-      <span class="spinner spinner-inline"></span>
-      <span id="run-label-knockout"></span>
-    </div>
-
-    <!-- Carries its own solid background: it is the one thing in this bar that
-         must stay a legible control at every fill level, including 100%. -->
-    <button id="run-stop" class="btn btn-small btn-quiet meter-stop">Stop</button>
-  </div>
+       The running bar is the progress meter: --run-pct drives both the fill's
+       width and the knockout layer's clip, so the coloured text can never
+       disagree with the colour behind it. Its line is rendered twice for that
+       reason — once in --text over the card, once in --primary-text clipped to
+       the fill. Only the first is exposed; the second is the same words in
+       another colour. A queued bar is one quiet line and a Cancel: it has no
+       progress to report until its turn comes. -->
+  <div id="run-stack" class="run-stack" hidden></div>
 
   <div id="bulk-bar" class="bulk-bar" hidden>
     <div class="bulk-top">
