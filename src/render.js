@@ -3,10 +3,16 @@
 // A 1000+ row queue is too much to mount at once, so we render a window and
 // extend it as the user scrolls. All user-controlled text goes in via
 // textContent, never innerHTML — usernames and bios are attacker-controlled.
+//
+// Every name on screen goes through a `mask`, which defaults to the identity
+// one. That is how screenshot mode reaches this file without it learning that
+// the mode exists: there is no branch here, only a pair of functions that
+// happen to be pass-throughs most of the time. See src/alias.js.
 
 import { ACTION_LABELS, groupByDay } from './history.js';
 import { formatCount, formatMutuals } from './model.js';
 import { PLACEHOLDER, resolveAvatar } from './avatars.js';
+import { IDENTITY_MASK } from './alias.js';
 
 const PAGE_SIZE = 60;
 
@@ -27,10 +33,11 @@ function openTarget(tag, className, text, title) {
 }
 
 export class ListRenderer {
-  constructor({ container, sentinel, handlers }) {
+  constructor({ container, sentinel, handlers, mask = IDENTITY_MASK }) {
     this.container = container;
     this.sentinel = sentinel;
     this.handlers = handlers;
+    this.mask = mask;
     this.rows = [];
     this.selected = new Set();
     this.rendered = 0;
@@ -134,6 +141,15 @@ export class ListRenderer {
     }
   }
 
+  /**
+   * Swap the naming mask. Nothing repaints from here — the caller is already
+   * following this with a `setRows`, and repainting twice would drop the
+   * scroll position of a list someone is halfway down.
+   */
+  setMask(mask) {
+    this.mask = mask || IDENTITY_MASK;
+  }
+
   setSelection(selected) {
     this.selected = selected;
     for (const [id, node] of this.nodesById) {
@@ -198,14 +214,23 @@ export class ListRenderer {
     node.dataset.id = row.id;
     if (this.selected.has(row.id)) node.classList.add('is-selected');
 
+    // Masked once, here, so nothing below can render one of them raw. The
+    // titles and aria-labels go through it too: a tooltip is as visible in a
+    // screenshot as the row it hangs off.
+    const handle = this.mask.username(row.username);
+    const name = this.mask.fullName(row.username, row.fullName);
+
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.className = 'row-check';
     checkbox.checked = this.selected.has(row.id);
-    checkbox.setAttribute('aria-label', `Select ${row.username}`);
+    // Masked, like every other name here. Not disabled here any more either:
+    // applyClaim below owns that, since whether a row is inert now depends on
+    // which job is holding it rather than on one flag for the whole list.
+    checkbox.setAttribute('aria-label', `Select ${handle}`);
     node.appendChild(checkbox);
 
-    const openLabel = `Open @${row.username} in the main tab`;
+    const openLabel = `Open @${handle} in the main tab`;
 
     const avatarButton = openTarget('button', 'avatar-button', undefined, openLabel);
     const avatar = document.createElement('img');
@@ -225,14 +250,14 @@ export class ListRenderer {
     const main = el('div', 'row-main');
 
     const title = el('div', 'row-title');
-    title.appendChild(openTarget('button', 'username link-button', `@${row.username}`, openLabel));
+    title.appendChild(openTarget('button', 'username link-button', `@${handle}`, openLabel));
     if (row.isVerified) title.appendChild(el('span', 'chip chip-verified', 'Verified'));
     if (row.following) title.appendChild(el('span', 'chip chip-following', 'Following'));
     if (row.isPrivate) title.appendChild(el('span', 'chip', 'Private'));
     main.appendChild(title);
 
-    if (row.fullName) {
-      main.appendChild(openTarget('button', 'row-name link-button', row.fullName, openLabel));
+    if (name) {
+      main.appendChild(openTarget('button', 'row-name link-button', name, openLabel));
     }
 
     const stats = [formatMutuals(row)];
@@ -243,7 +268,8 @@ export class ListRenderer {
     main.appendChild(el('div', 'row-stats', stats.join(' · ')));
 
     if (row.mutualNames.length > 0) {
-      main.appendChild(el('div', 'row-mutuals', `with ${row.mutualNames.join(', ')}`));
+      const mutuals = row.mutualNames.map((mutual) => this.mask.username(mutual));
+      main.appendChild(el('div', 'row-mutuals', `with ${mutuals.join(', ')}`));
     }
 
     // No bio line. One truncated clause of someone's profile text told you very
@@ -406,9 +432,14 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute:
  * has no business knowing what the other feature did; it renders the sentence
  * it is handed. The checkbox stays live: the note says a row is not worth
  * ticking by default, not that it cannot be ticked.
+ *
+ * Every row carries its real handle in `data-username` regardless of the mask.
+ * Clicking a log row opens that profile, and the panel used to read the handle
+ * back off the rendered text — which is fine until the rendered text is a
+ * pseudonym and the click navigates to an account that does not exist.
  */
 export function renderLog(container, records, {
-  now, selected, canFollow, claimed = new Map(), skipNotes = {},
+  now, selected, canFollow, claimed = new Map(), skipNotes = {}, mask = IDENTITY_MASK,
 }) {
   container.textContent = '';
   const fragment = document.createDocumentFragment();
@@ -420,6 +451,9 @@ export function renderLog(container, records, {
       const row = el('div', 'log-row');
       row.dataset.id = record.userId;
       row.dataset.at = String(record.at);
+      row.dataset.username = record.username;
+
+      const handle = mask.username(record.username);
 
       const claim = claimed.get(record.userId);
       const isClaimed = claimed.has(record.userId);
@@ -432,7 +466,7 @@ export function renderLog(container, records, {
         checkbox.className = 'row-check log-check';
         checkbox.checked = selected.has(record.userId);
         checkbox.disabled = isClaimed;
-        checkbox.setAttribute('aria-label', `Select ${record.username}`);
+        checkbox.setAttribute('aria-label', `Select ${handle}`);
         row.appendChild(checkbox);
         if (selected.has(record.userId)) row.classList.add('is-selected');
       } else {
@@ -441,8 +475,8 @@ export function renderLog(container, records, {
 
       row.appendChild(el('time', 'log-time', timeFormat.format(new Date(record.at))));
 
-      const username = openTarget('button', 'log-user link-button', `@${record.username}`,
-        `Open @${record.username} in the main tab`);
+      const username = openTarget('button', 'log-user link-button', `@${handle}`,
+        `Open @${handle} in the main tab`);
       row.appendChild(username);
 
       const action = el('span', `log-action log-action-${record.action}`,

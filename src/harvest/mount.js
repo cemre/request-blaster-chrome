@@ -5,6 +5,7 @@
 // beyond the mountHarvest() call. Deleting that call plus this directory
 // removes the feature entirely.
 
+import { IDENTITY_MASK } from '../alias.js';
 import { suppressDownloadUi } from './batch.js';
 import { collectCandidates, runHarvest } from './harvest.js';
 import { candidatesFromLogEntries, harvestNotes } from './model.js';
@@ -189,7 +190,7 @@ async function refreshNotes(skipNotes, ids) {
   }
 }
 
-function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes) {
+function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes, mask) {
   function setHarvestStatus(message) {
     $('harvest-status').textContent = message;
   }
@@ -240,7 +241,7 @@ function bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes)
         onProgress: ({ done, total, item, result }) => {
           // The status line keeps naming the account — the meter's label, below,
           // has no room for a username once the counter is in it.
-          setHarvestStatus(`${done} / ${total} — @${item.username}`);
+          setHarvestStatus(`${done} / ${total} — @${mask().username(item.username)}`);
           // Phrased like the action and hydration queues' own labels
           // ("Rejecting 4 / 10…", "Enriching 40 / 100…") so the meter reads as
           // one running thing regardless of which queue is behind it.
@@ -396,6 +397,9 @@ export function mountHarvest({
   },
   externalRun = { start() {}, update() {}, finish() {} },
   skipNotes = { set() {} },
+  // The panel's naming mask, as a getter — the status line below names the
+  // account being worked, and screenshot mode can be toggled mid-run.
+  mask = () => IDENTITY_MASK,
 } = {}) {
   const anchor = document.querySelector('.log-controls');
   if (!anchor) {
@@ -423,7 +427,7 @@ export function mountHarvest({
     .catch((err) => logError('could not load the harvested marks:', err));
 
   try {
-    bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes);
+    bindControls(selectedLogEntries, confirmAction, externalRun, skipNotes, mask);
     bindLifecycle();
   } catch (err) {
     // A throw here leaves a button on screen wired to nothing, which is the

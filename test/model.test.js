@@ -270,6 +270,59 @@ test('applyFilters: high mutual thresholds', () => {
   assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, minMutuals: 100 }).map((r) => r.id), ['10']);
 });
 
+test('applyFilters: an upper bound is the mirror of a lower one', () => {
+  const rows = mergeRows(
+    [
+      { pk: '10', username: 'a', social_context: 'Followed by x + 186 more' },
+      { pk: '11', username: 'b', social_context: 'Followed by x, y, z' },
+      { pk: '12', username: 'c', social_context: 'Followed by x, y' },
+      { pk: '13', username: 'unknown' },
+    ],
+    {},
+    {}
+  );
+  assert.deepEqual(rows.map((r) => r.mutuals), [187, 3, 2, null]);
+
+  // Inclusive, like minMutuals: the panel's "< 5" arrives here as 4.
+  assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, maxMutuals: 4 }).map((r) => r.id), ['11', '12']);
+  assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, maxMutuals: 2 }).map((r) => r.id), ['12']);
+
+  // A ceiling of 0 is not "off" — the whole list is off by null alone.
+  assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, maxMutuals: 0 }).map((r) => r.id), []);
+  assert.equal(applyFilters(rows, { ...DEFAULT_FILTERS, maxMutuals: null }).length, 4);
+});
+
+test('applyFilters: an unknown count cannot clear a ceiling either', () => {
+  // Symmetric to the minimum: `null > n` is false, so an unfiltered null would
+  // slide under every ceiling and read as "few mutuals" — the exact claim the
+  // absent social_context does not support.
+  const rows = mergeRows([{ pk: '1', username: 'unknown' }], {}, {});
+  assert.equal(rows[0].mutuals, null);
+  assert.equal(applyFilters(rows, { ...DEFAULT_FILTERS, maxMutuals: 4 }).length, 0);
+});
+
+test('a ceiling counts as a filter, and gets its unknowns reported', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'known', social_context: 'Followed by x, y' },
+      { pk: '2', username: 'unknown' },
+    ],
+    {},
+    {}
+  );
+
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, maxMutuals: 4 }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, maxMutuals: 0 }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, maxMutuals: null }), false);
+
+  // The estimate answers a ceiling for free, so this stays out of the
+  // enriched-only group alongside minMutuals.
+  assert.equal(usesEnrichedFilters({ ...DEFAULT_FILTERS, maxMutuals: 4 }), false);
+
+  assert.equal(countHiddenByUnknownMutuals(rows, { ...DEFAULT_FILTERS, maxMutuals: 4 }), 1);
+  assert.equal(countHiddenByUnknownMutuals(rows, DEFAULT_FILTERS), 0);
+});
+
 test('applyFilters: noMutuals only trusts an exact count', () => {
   // The hazard this filter is designed around: sampled against a live queue,
   // 128 of 200 pending users had no social_context and half of those actually

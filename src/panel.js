@@ -4,6 +4,7 @@
 // alive as long as the panel is open, which is exactly as long as any of this
 // work should be running.
 
+import * as anon from './anon.js';
 import * as api from './api.js';
 import * as history from './history.js';
 import * as store from './store.js';
@@ -226,6 +227,18 @@ function reportError(err) {
 
 function recompute() {
   const live = state.rows.filter((row) => !state.doneIds.has(row.id));
+
+  // Search matches what is on screen, not what is underneath it. Without this
+  // the search box cannot be demonstrated while screenshot mode is on: you
+  // would be typing a name the row is showing and getting nothing back.
+  // Always written, never conditionally, so turning the mode off cannot leave
+  // a stale pseudonym behind still answering searches.
+  const mask = anon.mask();
+  for (const row of live) {
+    row.alias = mask.on ? mask.username(row.username) : '';
+    row.aliasName = mask.on ? mask.fullName(row.username, row.fullName) : '';
+  }
+
   state.visible = sortRows(applyFilters(live, state.filters), state.settings.sort);
 
   renderer.setRows(state.visible);
@@ -251,8 +264,8 @@ function recompute() {
       : `${unenriched} request${plural} not yet enriched and therefore hidden by these filters.`;
     warning.hidden = false;
   } else if (unknownMutuals > 0) {
-    // A minimum threshold is not enriched-only — the free estimate still
-    // filters — so only the rows Instagram said nothing about get held back.
+    // Neither bound is enriched-only — the free estimate still filters — so
+    // only the rows Instagram said nothing about get held back.
     warning.textContent = `${unknownMutuals} request${unknownMutuals === 1 ? '' : 's'} hidden: Instagram did not report a mutual count for them. Load their details to check.`;
     warning.hidden = false;
   } else {
@@ -303,7 +316,7 @@ function updateEmptyState(live) {
  */
 function resetFilters() {
   $('f-following').checked = false;
-  $('f-mutuals').value = '0';
+  $('f-mutuals').value = 'any';
   $('f-max-followers').value = '';
   for (const id of ['f-zero-posts', 'f-empty-bio', 'f-default-pic', 'f-bot-ratio']) {
     $(id).checked = false;
@@ -598,6 +611,53 @@ function rebuildRows() {
   state.rows = mergeRows(state.pendingUsers, state.statuses, state.cache);
 }
 
+// ------------------------------------------------------- screenshot mode
+//
+// Cmd+Alt+S (Ctrl+Alt+S off Mac). Display only: it renames what is drawn and
+// blurs the avatars, here and on the Instagram tab, and touches no stored data
+// and no write. See src/anon.js and src/alias.js.
+
+/**
+ * Real display names for the tab to work from, as `{ handle: fullName }`.
+ *
+ * The tab can name anyone Instagram links, because the href carries the
+ * identity — but a profile header's name sits outside any link, so it needs
+ * telling. We already hold exactly this: the pending list ships `full_name`
+ * for every request, and hydration adds more.
+ */
+function knownFullNames() {
+  const names = {};
+  for (const row of state.rows) {
+    if (row.fullName) names[row.username.toLowerCase()] = row.fullName;
+  }
+  return names;
+}
+
+/**
+ * Repaint everything that draws a name.
+ *
+ * Both lists, because either can be on screen and the other is one click away;
+ * the harvest status line reads the mask itself on its next write.
+ */
+function applyAnonMode() {
+  document.body.classList.toggle('is-anon', anon.isOn());
+  renderer.setMask(anon.mask());
+  recompute();
+  if (state.log.loaded) recomputeLog();
+}
+
+async function toggleAnonMode() {
+  // Applied first, and unconditionally: anon.toggle sets its own state before
+  // it goes anywhere near the tab, so the panel repaints whether or not the
+  // push lands. A throw below means the tab is out of step, not that this half
+  // failed — and the banner is what says so.
+  try {
+    await anon.toggle(knownFullNames());
+  } finally {
+    applyAnonMode();
+  }
+}
+
 // -------------------------------------------------------------- action log
 
 function setMode(mode) {
@@ -729,6 +789,7 @@ function recomputeLog() {
     // the checkboxes back.
     claimed: state.claims.log,
     skipNotes: state.log.skipNotes,
+    mask: anon.mask(),
   });
 
   for (const tab of document.querySelectorAll('.log-tab')) {
@@ -1188,15 +1249,32 @@ function confirmAction({ title, body, warn }) {
 
 // ------------------------------------------------------------------ binding
 
+/**
+ * The mutuals menu, in the model's terms.
+ *
+ * Its values carry the comparison each option is labelled with, in the two
+ * forms the menu uses: "<10" is strict and steps in by one to reach the
+ * inclusive bounds applyFilters works in, while "10+" already is one. "0" is
+ * not a bound at all but its own predicate, and an enriched-only one: an
+ * absent social_context is not evidence of zero.
+ */
+function readMutualsFilter(value) {
+  const under = /^<(\d+)$/.exec(value);
+  const atLeast = /^(\d+)\+$/.exec(value);
+
+  let minMutuals = 0;
+  let maxMutuals = null;
+  if (atLeast) minMutuals = Number(atLeast[1]);
+  else if (under) maxMutuals = Number(under[1]) - 1;
+
+  return { minMutuals, maxMutuals, noMutuals: value === '0' };
+}
+
 function readFilters() {
   const rawMax = $('f-max-followers').value;
-  // "none" is its own predicate rather than a minimum, and is enriched-only:
-  // an absent social_context is not evidence of zero mutuals.
-  const mutuals = $('f-mutuals').value;
   state.filters = {
     onlyFollowing: $('f-following').checked,
-    minMutuals: mutuals === 'none' ? 0 : Number(mutuals),
-    noMutuals: mutuals === 'none',
+    ...readMutualsFilter($('f-mutuals').value),
     maxFollowers: rawMax === '' ? null : Number(rawMax),
     zeroPosts: $('f-zero-posts').checked,
     emptyBio: $('f-empty-bio').checked,
@@ -1260,7 +1338,9 @@ function bindLog() {
     if (!row) return;
 
     if (event.target.closest('[data-action="open"]')) {
-      return api.navigateToProfile(rowUsername(row)).catch(reportError);
+      const username = rowUsername(row);
+      if (!username) return undefined;
+      return api.navigateToProfile(username).catch(reportError);
     }
     if (event.target.closest('.log-check') || !row.classList.contains('is-selectable')) return;
 
@@ -1303,9 +1383,15 @@ function bindLog() {
   });
 }
 
-/** The username shown on a log row, read back off the rendered node. */
+/**
+ * The real username a log row stands for.
+ *
+ * Off `data-username`, not off the rendered text: what is rendered is whatever
+ * the naming mask produced, and under screenshot mode that is a pseudonym.
+ * Navigating to it would open an account that does not exist.
+ */
 function rowUsername(row) {
-  return row.querySelector('.log-user').textContent.replace(/^@/, '');
+  return row.dataset.username || '';
 }
 
 function toggleLogSelection(userId, checked) {
@@ -1380,6 +1466,7 @@ function bind() {
   });
 
   renderer = new ListRenderer({
+    mask: anon.mask(),
     container: $('list'),
     sentinel: $('sentinel'),
     handlers: {
@@ -1444,6 +1531,17 @@ function bind() {
     if (event.key !== 'Escape' || $('spam-panel').hidden) return;
     setSpamOpen(false);
     $('spam-toggle').focus();
+  });
+
+  // Screenshot mode. Matched on event.code because Option+S on macOS types
+  // "ß" — event.key would never be "s" for the combination that fires this.
+  // The panel has to hold focus for it, which is the trade for not spending a
+  // manifest command and a global binding on a mode only used while shooting.
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'KeyS' || !event.altKey) return;
+    if (!event.metaKey && !event.ctrlKey) return;
+    event.preventDefault();
+    toggleAnonMode().catch(reportError);
   });
 
   $('sort').addEventListener('change', async () => {
@@ -1543,6 +1641,9 @@ function bind() {
     confirmAction,
     externalRun,
     skipNotes,
+    // A getter, not the mask itself: the status line is written during a run,
+    // and the mode can be toggled while one is in flight.
+    mask: anon.mask,
   });
   // #endregion harvest
 }
@@ -1550,8 +1651,12 @@ function bind() {
 async function init() {
   state.settings = await store.loadSettings();
   state.cache = await store.loadProfileCache();
+  // Before bind(), so the renderer is constructed with the right mask rather
+  // than painting the real names once and correcting itself.
+  await anon.load();
 
   bind();
+  document.body.classList.toggle('is-anon', anon.isOn());
   $('sort').value = state.settings.sort;
   setMode('requests');
 

@@ -92,18 +92,28 @@
         <path d="M1 1.25 5 5l4-3.75" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
       </svg>
       <!-- A select is as wide as its longest option whether or not that option
-           is chosen, so a spelled-out "none (loaded rows)" cost this chip ~60px
-           on every panel at every width. The caveat is not lost: the same text
-           is in the tooltip, and #enriched-warning states it in full whenever
-           the option is actually on. -->
-      <select id="f-mutuals" aria-label="Mutuals" title="&quot;none&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals.">
-        <option value="0">any</option>
-        <option value="none">none</option>
-        <option value="1">1+</option>
-        <option value="5">5+</option>
-        <option value="10">10+</option>
-        <option value="50">50+</option>
-        <option value="100">100+</option>
+           is chosen, so spelling the caveat into "0" — once "none (loaded
+           rows)" — cost this chip ~60px on every panel at every width. The
+           caveat is not lost: the same text is in the tooltip, and
+           #enriched-warning states it in full whenever the option is on.
+
+           The comparison lives in the value ("<5", "10+") so the option and
+           what it does cannot drift apart: readFilters reads the form off the
+           value rather than keeping a second table of its own. Ceilings are
+           strict and floors are inclusive, exactly as written, which also
+           makes the two halves meet: "<5" and "5+" divide the rows in two
+           with no count falling between them, where "<5" against "> 5" used
+           to drop anyone with exactly five. -->
+      <select id="f-mutuals" aria-label="Mutuals" title="&quot;0&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals. The ranges also skip rows whose count is still unknown.">
+        <option value="any">any</option>
+        <option value="0">0</option>
+        <option value="&lt;5">&lt; 5</option>
+        <option value="&lt;10">&lt; 10</option>
+        <option value="1+">1+</option>
+        <option value="5+">5+</option>
+        <option value="10+">10+</option>
+        <option value="50+">50+</option>
+        <option value="100+">100+</option>
       </select>
     </label>
 

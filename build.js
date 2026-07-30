@@ -30,7 +30,7 @@ const OUT = join(DIST, 'store');
 // which is the safe direction to get this wrong. `test/`, `docs/`, `.claude/`,
 // `package.json`, `README.md` and this file are all excluded by omission.
 const INCLUDE = ['manifest.json', 'background.js', 'content.js', 'banner.js',
-                 'sidepanel.html', 'sidepanel.css', 'images', 'src'];
+                 'anon-content.js', 'sidepanel.html', 'sidepanel.css', 'images', 'src'];
 
 // The harvest feature, as files. Copied by INCLUDE above, then removed.
 const HARVEST_PATHS = ['src/harvest', 'harvest-content.js'];
@@ -191,6 +191,11 @@ function verify() {
     ...Object.values(manifest.icons ?? {}),
     ...Object.values(manifest.action?.default_icon ?? {}),
     ...(manifest.content_scripts ?? []).flatMap((s) => [...(s.js ?? []), ...(s.css ?? [])]),
+    // A missing web-accessible resource fails at runtime rather than at load,
+    // so Chrome accepts the package and the feature that dynamic-imports it
+    // simply never works. Nothing here is a glob today; if one is added, this
+    // needs to resolve it rather than test it as a literal path.
+    ...(manifest.web_accessible_resources ?? []).flatMap((entry) => entry.resources ?? []),
   ].filter(Boolean);
   for (const file of named) {
     if (!existsSync(join(OUT, file))) problems.push(`manifest names ${file}, which is not in the package`);

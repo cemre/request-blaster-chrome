@@ -811,6 +811,23 @@ body.has-toolbar .list-scroll { padding-bottom: calc(var(--toolbar-h, 92px) + 12
   border: 1px solid var(--border);
 }
 
+/* Screenshot mode (Cmd+Alt+S). Names go through a mask the renderer holds, but
+   a face is not a string, so the one thing this feature does in CSS is take
+   the profile pictures out. A rule rather than a filter set on the <img> in
+   script, so there is nothing to undo — the class goes and the photos are back.
+
+   clip-path, not the border-radius already on .avatar: a filter spreads past
+   the element's box and the radius is applied before it, so the blur alone
+   leaves a square halo around every circle. Clipping happens after filtering,
+   which is what actually holds the shape. The scale then pushes the transparent
+   edge outside the clip, so the rim samples the photo rather than fading into
+   the panel. */
+body.is-anon .avatar {
+  filter: blur(6px);
+  clip-path: circle(50%);
+  transform: scale(1.12);
+}
+
 .row-main { min-width: 0; }
 
 .row-title {
@@ -1225,7 +1242,7 @@ body.has-toolbar .list-scroll { padding-bottom: calc(var(--toolbar-h, 92px) + 12
   .icon-toggle { width: 26px; }
 
   /* The widest thing in a bar is a word naming a control whose value is right
-     beside it. Drop the word and the value carries the chip: "1+", "none".
+     beside it. Drop the word and the value carries the chip: "> 5", "0".
      display, not visibility — this must also leave the accessibility tree, and
      the select's aria-label is what names it from here on.
 
@@ -1241,12 +1258,12 @@ body.has-toolbar .list-scroll { padding-bottom: calc(var(--toolbar-h, 92px) + 12
      There the chip goes back to naming the control and hides the select behind
      it — the same overlay .select-chip-menu uses, so the popup stays native.
      option:checked tracks the live selection, so this flips as it is used. */
-  .mutuals-chip:has(option[value='0']:checked) { position: relative; }
+  .mutuals-chip:has(option[value='any']:checked) { position: relative; }
 
-  .mutuals-chip:has(option[value='0']:checked) .label-wide,
-  .mutuals-chip:has(option[value='0']:checked) .chevron-standin { display: block; }
+  .mutuals-chip:has(option[value='any']:checked) .label-wide,
+  .mutuals-chip:has(option[value='any']:checked) .chevron-standin { display: block; }
 
-  .mutuals-chip:has(option[value='0']:checked) select {
+  .mutuals-chip:has(option[value='any']:checked) select {
     position: absolute;
     inset: 0;
     width: 100%;
