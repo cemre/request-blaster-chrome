@@ -7,7 +7,7 @@
 
 import { IDENTITY_MASK } from '../alias.js';
 import { suppressDownloadUi } from './batch.js';
-import { collectCandidates, runHarvest } from './harvest.js';
+import { runHarvest } from './harvest.js';
 import { candidatesFromLogEntries, harvestNotes } from './model.js';
 import { loadHarvested } from './store.js';
 
@@ -106,45 +106,13 @@ function buildNote() {
 }
 
 /**
- * PARKED — nothing calls this. It backed the "All followers" toggle, which was
- * removed from the panel; a harvest now runs on ticked log rows only. Kept, with
- * its tests, because the sweep it performs is expensive to get right and the
- * decision to drop it was "we probably won't use this", not "this was wrong".
- * `collectCandidates` and what it reaches — `fetchAllFollowers`,
- * `selectNotFollowedBack`, `unionCandidates`, `log.js` — are here for this
- * function alone and are dead with it. Everything else under src/harvest/ is
- * live. Re-mounting a control that calls this is all it would take to restore.
- *
- * Every follower the viewer does not follow back, plus everyone they accepted
- * and never followed. Costs a full follower sweep plus a show_many pass.
- *
- * Returns null when there is nothing to do, having already said why.
- */
-async function planAllFollowers(setStatus) {
-  const { candidates, unknown, capped } = await collectCandidates(({ message }) => setStatus(message));
-
-  if (candidates.length === 0) {
-    setStatus('Nothing new to harvest.');
-    return null;
-  }
-
-  const unknownNote = unknown.length
-    ? ` ${unknown.length} had no follow status and were skipped.`
-    : '';
-  // Mirrors how the pending list's own cap is surfaced (cap-note, above):
-  // a standing fact about the data the user has to know before starting,
-  // not something to discover after a truncated batch.
-  const cappedNote = capped
-    ? ' Your followers list is large enough that Instagram\'s page cap was hit — this batch will miss some followers.'
-    : '';
-  return { candidates, note: unknownNote + cappedNote };
-}
-
-/**
- * Only the log rows the user ticked.
+ * The log rows the user ticked, which since the All-followers toggle went is
+ * the only way a harvest is asked for.
  *
  * Costs no API calls at all to plan: a log row already carries the id and
- * username a harvest needs, so this skips the follower sweep entirely.
+ * username a harvest needs, so this skips the follower sweep entirely. That is
+ * now the point rather than a side benefit — see the note above collectCandidates
+ * for what the sweep did and why it is not offered.
  *
  * Already-harvested rows are left out of select-all but can still be ticked by
  * hand — that is the only way to redo one — so this is the path a redo arrives
@@ -320,7 +288,7 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
               // repaint, and the queue's pacing is not waiting on it.
               refreshNotes(skipNotes, [item.pk, result?.pk]);
             },
-            onFinish: ({ done, total, halted, stopped, failures, batchId, reviewableCounts }) => {
+            onFinish: ({ done, total, halted, haltReason, haltStatus, stopped, failures, batchId, reviewableCounts }) => {
               $('harvest-start').disabled = false;
               activeHarvest = null;
               clearActiveLogRow();
@@ -357,8 +325,10 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
               else setHarvestStatus(`Done — batch ${batchId}.${mix}${failedNote}`);
 
               // The envelope the pipeline reads: a halt here pauses everything
-              // behind this job, exactly as it would from a write.
-              resolve({ halted, stopped, failures });
+              // behind this job, exactly as it would from a write. The reason
+              // travels with it, or the pause banner has only Instagram's raw
+              // word to go on and words the halt from the wrong one.
+              resolve({ halted, haltReason, haltStatus, stopped, failures });
             },
           }).then((harvest) => {
             activeHarvest = harvest;
@@ -447,9 +417,9 @@ function bindLifecycle() {
  *   What this feature tells the log about accounts it has already written to a
  *   batch: the label takes the row's action chip, the date goes in its tooltip,
  *   and select-all leaves the row alone. Optional and defaulted like queueRun —
- *   without it the marks are simply invisible, and the "All followers" sweep
- *   still skips them, since that has always been decided from storage rather
- *   than from the panel.
+ *   without it the marks are simply invisible, though a redo is still possible
+ *   by hand, since which accounts are already harvested has always been decided
+ *   from storage rather than from the panel.
  */
 export function mountHarvest({
   selectedLogEntries = () => [],

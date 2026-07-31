@@ -16,6 +16,19 @@ import { loadAllLogRecords, loadHarvested, markHarvested } from './store.js';
 /**
  * Both candidate sources, unioned and de-duplicated.
  *
+ * **Nothing calls this.** It backed an "All followers" toggle in the harvest
+ * row, which has been removed: sweeping every follower and harvesting the lot is
+ * not a realistic unit of work. It costs a full follower sweep plus a
+ * `show_many` pass before the user has confirmed anything, it hits
+ * `fetchAllFollowers`'s page cap on exactly the accounts big enough to want it,
+ * and what it then plans is a run of thousands behind a single confirm. The
+ * replacement is batches of ~50, which is a different shape — paged rather than
+ * exhaustive — so this is kept as the statement of what the two sources are and
+ * how they combine, not as code to switch back on unchanged.
+ *
+ * Its parts are all still live and still tested: `selectNotFollowedBack`,
+ * `unionCandidates` and `acceptedNotFollowed`.
+ *
  * @returns candidates and unknown as before, plus `capped`: true when the
  *   follower sweep hit fetchAllFollowers's page cap, meaning the backlog is
  *   truncated rather than complete — the caller has to say so rather than

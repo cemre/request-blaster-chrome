@@ -246,6 +246,15 @@ Everything goes through `www.instagram.com/api/v1`. Verified 2026-07-28:
   with **HTTP 200** and `{"status":"fail"}`. `www` works correctly. The content
   script therefore treats a `status: "fail"` body as an error regardless of
   HTTP status.
+- **A `401`, a `login_required` message and an HTML body are not proof of a dead
+  session.** All three used to raise `logged_out`, and in July 2026 a signed-in
+  account was told to sign in — advice it could not act on. `classify` in
+  `content.js` now reads the `ds_user_id` cookie first (`sessionid` is HttpOnly
+  and unreadable from the page, `ds_user_id` is not) and only calls it a
+  sign-out when there is no session or the response came from a login URL.
+  Anything else is reported as a throttle, which still halts the queue. The
+  banner's (i) carries the raw status and message, so the next one of these can
+  be diagnosed from the panel rather than guessed at.
 - `has_anonymous_profile_picture` ships free on the pending list, so the
   "no profile pic" filter needs no enrichment.
 - `pk` arrives as a string.
