@@ -188,8 +188,13 @@ function setLoadingText(text) {
   $('loading-text').textContent = text;
 }
 
-function showBanner(text, { retry = false, paused = false } = {}) {
-  $('banner-text').textContent = text;
+function showBanner(text, { retry = false, paused = false, detail = '' } = {}) {
+  $('banner-message').textContent = text;
+  // The (i) only appears when there is something underneath worth opening. A
+  // permanently visible one that sometimes says nothing teaches you not to
+  // click it, which costs exactly the times it had the answer.
+  $('banner-detail').hidden = !detail;
+  $('banner-detail').dataset.detail = detail;
   $('banner-retry').hidden = !retry;
   $('banner-resume').hidden = !paused;
   $('banner-cancel-all').hidden = !paused;
@@ -207,21 +212,114 @@ function hideBanner() {
   $('banner-dismiss').hidden = false;
 }
 
+/**
+ * What to do about a failure, in one short sentence.
+ *
+ * A banner is read at a glance, at 260px, by someone who wants to get back to
+ * triaging — so it says the action and stops. Everything it leaves out lives one
+ * click away behind the (i), which is what that control is for: the prose is
+ * free to be short precisely because nothing is lost by shortening it.
+ *
+ * `reason` is read before `code` because the codes are too coarse to word a
+ * message from. `logged_out` was raised for any 401 and for any HTML body, so a
+ * signed-in account hitting a throttled bulk endpoint was told to sign in —
+ * advice that cannot work, because they already are. content.js now settles
+ * that at the point of failure, cookie in hand, and `reason` is what it settled.
+ */
 function describeError(err) {
+  switch (err?.reason) {
+    case 'signed_out':
+      return 'You are signed out of Instagram. Sign in on the main tab.';
+    case 'session_rejected':
+      return 'Instagram throttled you. Try again in a few minutes.';
+    case 'checkpoint':
+      return 'Instagram needs you to confirm something on the main tab.';
+    case 'challenge':
+      return 'Instagram wants a human check on the main tab.';
+    case 'rate_limited':
+      return 'Instagram is rate limiting you. Try again later.';
+    case 'html_response':
+      return 'Instagram did not answer properly. Reload the main tab.';
+    default:
+      break;
+  }
+
   switch (err?.code) {
     case 'logged_out':
-      return 'You are not signed in to Instagram. Sign in on the main tab, then retry.';
+      return 'You are signed out of Instagram. Sign in on the main tab.';
     case 'blocked':
-      return 'Instagram is rate limiting this account. Wait a while before retrying.';
+      return 'Instagram is rate limiting you. Try again later.';
     case 'content_not_ready':
-      return 'Could not reach the Instagram tab. Reload that tab, then retry.';
+      return 'Cannot reach the Instagram tab. Reload it.';
     default:
       return err?.message || String(err);
   }
 }
 
+/**
+ * The raw failure, for the banner's (i). The sentence above is a paraphrase and
+ * every paraphrase drops something; this is what was actually said, kept
+ * verbatim so a report of it is worth reading. Takes the same shape as
+ * describeError, so a halt envelope works here too.
+ */
+function errorDetail(err) {
+  if (!err) return '';
+  if (typeof err === 'string') return err;
+
+  const fromInstagram = Boolean(err.reason || err.code);
+  const lines = [];
+  if (err.reason) lines.push(`Reason: ${err.reason}`);
+  if (err.code) lines.push(`Code: ${err.code}`);
+  if (err.status !== undefined && err.status !== null) lines.push(`HTTP status: ${err.status}`);
+
+  // reportError also catches plain JavaScript errors from this file, and
+  // attributing a TypeError of ours to Instagram would send someone looking in
+  // the wrong place — the stack goes in for the same reason.
+  if (err.message) lines.push(`${fromInstagram ? 'Instagram said' : 'Error'}: ${err.message}`);
+  if (!fromInstagram && err.stack) lines.push('', String(err.stack));
+
+  return lines.join('\n');
+}
+
+/**
+ * Show the full text of a failure.
+ *
+ * `alert` is what this wants to be and is tried first, but Chrome makes no
+ * promise about JavaScript dialogs in an extension side panel, and a suppressed
+ * one returns instantly having shown nothing — silence being the single outcome
+ * an error detail must never have. So the call is timed: a dialog a person
+ * actually saw cannot come back in under a millisecond, and anything that fast
+ * is taken as suppressed and redrawn as a `<dialog>`, which always renders.
+ */
+function showErrorDetail(text) {
+  if (!text) return;
+
+  const before = performance.now();
+  try {
+    window.alert(text);
+    if (performance.now() - before > 1) return;
+  } catch {
+    // Not available at all — the fallback below covers it.
+  }
+
+  $('error-detail-text').textContent = text;
+  $('error-detail').showModal();
+}
+
 function reportError(err) {
-  showBanner(describeError(err), { retry: true });
+  showBanner(describeError(err), { retry: true, detail: errorDetail(err) });
+}
+
+/**
+ * A halt, in the shape describeError and errorDetail already read.
+ *
+ * ThrottledQueue reports a halt as loose fields rather than an error, because
+ * the thing that stopped it may have been a returned envelope and never was an
+ * error at all. Putting them back into one object is what stops the two message
+ * builders needing a second branch for the same failure arriving differently.
+ */
+function haltError(message, reason, status) {
+  return { message, reason, status };
 }
 
 // ------------------------------------------------------------------- render
@@ -935,7 +1033,8 @@ async function loadPending({ useSnapshot = true } = {}) {
         // Better to open with flags we know may be stale than not to open —
         // but not quietly, since that is exactly the failure above.
         showBanner(
-          `Could not re-check follow status (${describeError(err)}). "Already follow" may be out of date until you Refresh.`
+          `"Already follow" may be out of date. ${describeError(err)}`,
+          { detail: errorDetail(err) }
         );
       }
     }
@@ -1017,14 +1116,16 @@ async function runHydrationBatch() {
         await store.saveProfiles(fresh);
       }
     },
-    onFinish: async ({ halted, stopped, failures }) => {
+    onFinish: async ({ halted, haltReason, haltStatus, stopped, failures }) => {
       await store.saveProfiles(fresh);
       state.hydrationQueue = null;
       state.hydrationProgress = null;
       syncHydration();
 
-      if (halted) showBanner(`Enrichment stopped — Instagram returned "${halted}". Wait a while before retrying.`);
-      else if (stopped) setStatus('Enrichment stopped.');
+      if (halted) {
+        const halt = haltError(halted, haltReason, haltStatus);
+        showBanner(`Enrichment stopped. ${describeError(halt)}`, { detail: errorDetail(halt) });
+      } else if (stopped) setStatus('Enrichment stopped.');
       else if (failures.length) setStatus(`Enriched with ${failures.length} failure${failures.length === 1 ? '' : 's'}.`);
       else setStatus('');
 
@@ -1230,16 +1331,17 @@ function runJob(job) {
 }
 
 /** What is left to say once a job's bar has gone. */
-function reportOutcome(job, { halted, stopped, failures = [] }) {
+function reportOutcome(job, { halted, haltReason, haltStatus, stopped, failures = [] }) {
   const done = jobs.done(job);
 
   if (halted) {
     // Paused rather than stopped, and the wording has to carry that: the rows
     // this job never reached are still held, and everything queued behind it is
     // still queued. The banner is where the way back out lives.
+    const halt = haltError(halted, haltReason, haltStatus);
     showBanner(
-      `Paused after ${done} of ${job.total} — Instagram returned "${halted}". Wait a while, then resume.`,
-      { paused: true }
+      `Paused after ${done} of ${job.total}. ${describeError(halt)}`,
+      { paused: true, detail: errorDetail(halt) }
     );
   } else if (job.run) {
     // Every other branch below writes to the panel's status line, and a guest
@@ -1702,6 +1804,7 @@ function bind() {
   });
 
   $('banner-dismiss').addEventListener('click', hideBanner);
+  $('banner-detail').addEventListener('click', () => showErrorDetail($('banner-detail').dataset.detail));
 
   // Both views write to storage and neither messages the other, so this is
   // where they meet: handled ids in session, log shards in local.

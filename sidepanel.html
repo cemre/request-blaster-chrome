@@ -60,12 +60,23 @@
      on screen offering to restart the queued work, and a dismissible one would
      leave that work stranded with no way back to it. -->
 <div id="banner" class="banner" hidden>
-  <span id="banner-text"></span>
+  <!-- The (i) sits inside the text rather than beside the buttons on purpose:
+       it belongs to the sentence, not to the row of actions, and the banner's
+       prose is a paraphrase — this is where Instagram's own words are kept. -->
+  <span id="banner-text"><span id="banner-message"></span><button id="banner-detail" class="banner-detail" type="button" title="Show the full error" aria-label="Show the full error" hidden><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.75" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="4.6" r="1" fill="currentColor"/><path d="M8 7.2v4.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></span>
   <button id="banner-resume" class="icon-btn" hidden>Resume</button>
   <button id="banner-cancel-all" class="icon-btn" hidden>Cancel all</button>
   <button id="banner-retry" class="icon-btn" hidden>Retry</button>
   <button id="banner-dismiss" class="icon-btn">Dismiss</button>
 </div>
+
+<!-- Only ever shown if window.alert turns out to be suppressed here; Chrome
+     makes no promise about JavaScript dialogs in an extension side panel. See
+     panel.js showErrorDetail. -->
+<dialog id="error-detail">
+  <pre id="error-detail-text"></pre>
+  <form method="dialog"><button class="icon-btn">Close</button></form>
+</dialog>
 
 <div class="loading">
   <div class="spinner"></div>

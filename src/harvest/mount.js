@@ -280,7 +280,7 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
               // repaint, and the queue's pacing is not waiting on it.
               refreshNotes(skipNotes, [item.pk, result?.pk]);
             },
-            onFinish: ({ done, total, halted, stopped, failures, batchId, reviewableCounts }) => {
+            onFinish: ({ done, total, halted, haltReason, haltStatus, stopped, failures, batchId, reviewableCounts }) => {
               $('harvest-start').disabled = false;
               activeHarvest = null;
               clearActiveLogRow();
@@ -317,8 +317,10 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
               else setHarvestStatus(`Done — batch ${batchId}.${mix}${failedNote}`);
 
               // The envelope the pipeline reads: a halt here pauses everything
-              // behind this job, exactly as it would from a write.
-              resolve({ halted, stopped, failures });
+              // behind this job, exactly as it would from a write. The reason
+              // travels with it, or the pause banner has only Instagram's raw
+              // word to go on and words the halt from the wrong one.
+              resolve({ halted, haltReason, haltStatus, stopped, failures });
             },
           }).then((harvest) => {
             activeHarvest = harvest;

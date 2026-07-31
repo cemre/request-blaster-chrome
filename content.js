@@ -57,14 +57,60 @@ const BLOCK_MESSAGES = new Set([
   'Please wait a few minutes before you try again.',
 ]);
 
+// Instagram wants the account to clear something in the UI before it will act
+// again. Signed in, and nothing here can fix it — the tab has to.
+const INTERSTITIAL_REASONS = new Map([
+  ['challenge_required', 'challenge'],
+  ['checkpoint_required', 'checkpoint'],
+]);
+
+/**
+ * Does this browser hold an Instagram session at all?
+ *
+ * `sessionid` is HttpOnly and invisible from here, so it can never be the test.
+ * `ds_user_id` is set beside it at sign-in and is readable — harvest-content.js
+ * already reads it to learn who the viewer is, so it is the same evidence the
+ * harvest has trusted all along.
+ *
+ * Read live rather than cached: a session can end mid-run, which is exactly the
+ * case this is here to catch.
+ */
+function hasSession() {
+  return Boolean(readCookie('ds_user_id'));
+}
+
+// Where the fetch actually ended up. Instagram bounces an unauthenticated API
+// call to the login page, and a response that finished there says signed-out on
+// its own evidence rather than on a guess about what HTML means.
+const LOGIN_URL = /\/accounts\/(login|signup|suspended|disabled)/i;
+
+/**
+ * Instagram refused to treat the call as authenticated. Whether that means
+ * *you* are signed out is a separate question, and the cookie answers it.
+ *
+ * These two used to be one branch, which is how a signed-in account got told to
+ * sign in: the bulk endpoints answer a soft throttle with 401 `login_required`
+ * while the session cookie is still sitting right there, and "sign in, then
+ * retry" is advice nobody in that state can act on.
+ */
+function unauthenticated(status, message) {
+  return hasSession()
+    ? { ok: false, blocked: true, status, reason: 'session_rejected', error: message || `HTTP ${status}` }
+    : { ok: false, loggedOut: true, status, reason: 'signed_out', error: message || 'login_required' };
+}
+
 function classify(status, body) {
   const message = body && typeof body.message === 'string' ? body.message : null;
+  const interstitial = message ? INTERSTITIAL_REASONS.get(message) : null;
 
+  if (interstitial) {
+    return { ok: false, blocked: true, status, reason: interstitial, error: message };
+  }
   if (status === 429 || (message && BLOCK_MESSAGES.has(message)) || body?.spam === true) {
-    return { ok: false, blocked: true, status, error: message || 'rate_limited' };
+    return { ok: false, blocked: true, status, reason: 'rate_limited', error: message || 'rate_limited' };
   }
   if (message === 'login_required' || status === 401) {
-    return { ok: false, loggedOut: true, status, error: 'login_required' };
+    return unauthenticated(status, message);
   }
   // Instagram signals failure in the body while still returning HTTP 200. The
   // old i.instagram.com show_many calls failed exactly this way, which is why
@@ -73,6 +119,31 @@ function classify(status, body) {
     return { ok: false, status, error: message || 'Instagram returned status: fail' };
   }
   return null;
+}
+
+/**
+ * An HTML body where JSON was expected. Three different things arrive this way
+ * and they do not mean the same thing: the login page when the session really
+ * is gone, an interstitial when the account has something to clear, and a plain
+ * error page when something upstream fell over. Only the first is a sign-out,
+ * so the URL and the cookie decide before anything claims to know.
+ *
+ * The rest still halt the queue — `blocked` rather than a plain failure —
+ * because an endpoint answering with a web page is not answering, and running
+ * two hundred more requests into it only turns one failure into two hundred.
+ */
+function htmlResponse(response) {
+  const status = response.status;
+  if (LOGIN_URL.test(response.url || '') || !hasSession()) {
+    return { ok: false, loggedOut: true, status, reason: 'signed_out', error: 'login_required' };
+  }
+  return {
+    ok: false,
+    blocked: true,
+    status,
+    reason: 'html_response',
+    error: `Instagram served a web page instead of data (HTTP ${status})`,
+  };
 }
 
 async function igFetch(url, init = {}) {
@@ -93,8 +164,9 @@ async function igFetch(url, init = {}) {
   try {
     body = JSON.parse(text);
   } catch {
-    // Instagram serves an HTML login page instead of JSON when the session dies.
-    if (/<html/i.test(text)) return { ok: false, loggedOut: true, status: response.status, error: 'login_required' };
+    // Instagram serves HTML instead of JSON in several situations, only one of
+    // which is a dead session. See htmlResponse.
+    if (/<html/i.test(text)) return htmlResponse(response);
   }
 
   const problem = classify(response.status, body);
