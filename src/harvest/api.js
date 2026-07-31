@@ -18,9 +18,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const BULK_GAP_MS = 400;
 
 function raise(result) {
-  if (result?.loggedOut) throw new ApiError('logged_out', 'Not signed in to Instagram.');
-  if (result?.blocked) throw new ApiError('blocked', result.error || 'Instagram is rate limiting requests.');
-  throw new ApiError('api_error', result?.error || 'Instagram API request failed.');
+  const detail = { status: result?.status, reason: result?.reason };
+  if (result?.loggedOut) throw new ApiError('logged_out', result.error || 'Not signed in to Instagram.', detail);
+  if (result?.blocked) throw new ApiError('blocked', result.error || 'Instagram is rate limiting requests.', detail);
+  throw new ApiError('api_error', result?.error || 'Instagram API request failed.', detail);
 }
 
 // Unlike friendships/pending/, this endpoint paginates for real — verified

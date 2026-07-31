@@ -248,7 +248,52 @@ h1 {
   border-bottom: 1px solid var(--border);
 }
 
-.banner span { flex: 1; }
+.banner > span { flex: 1; }
+
+/* Inline with the sentence, not with the buttons: it explains the text it sits
+   in. `baseline` rather than a flex row because it has to sit on the last line
+   of a message that wraps to four at 260px. */
+.banner-detail {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.banner-detail:hover { opacity: 1; }
+
+.banner-detail:focus-visible {
+  outline: 2px solid var(--danger);
+  outline-offset: 2px;
+}
+
+/* The fallback detail view. Sized off the panel rather than the content: at
+   260px an unconstrained pre of a wrapped Instagram message pushes the dialog
+   wider than the panel it is centred in. */
+#error-detail {
+  max-width: calc(100vw - 32px);
+  padding: 12px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+#error-detail::backdrop { background: rgb(0 0 0 / 0.5); }
+
+#error-detail pre {
+  margin: 0 0 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 /* --------------------------------------------------------------- filters */
 

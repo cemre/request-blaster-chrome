@@ -16,9 +16,18 @@ const BULK_GAP_MS = 400;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class ApiError extends Error {
-  constructor(code, message) {
+  /**
+   * `code` is the broad shape of the failure and decides who halts. `reason` is
+   * the narrower fact the content script established at the point of failure,
+   * with the response and the cookie in front of it, and is what the panel
+   * words its message from — see content.js `classify` and panel.js
+   * `describeError`. `status` rides along so a message can cite it.
+   */
+  constructor(code, message, { status, reason } = {}) {
     super(message || code);
     this.code = code;
+    this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -139,9 +148,13 @@ export async function call(op, args = {}) {
 }
 
 function raise(result) {
-  if (result?.loggedOut) throw new ApiError('logged_out', 'Not signed in to Instagram.');
-  if (result?.blocked) throw new ApiError('blocked', result.error || 'Instagram is rate limiting requests.');
-  throw new ApiError('api_error', result?.error || 'Instagram API request failed.');
+  const detail = { status: result?.status, reason: result?.reason };
+  // Instagram's own words are kept as the message even where a generic one
+  // reads better, because the message is what the banner's detail view shows —
+  // the panel's prose comes from `reason` and does not need to live here too.
+  if (result?.loggedOut) throw new ApiError('logged_out', result.error || 'Not signed in to Instagram.', detail);
+  if (result?.blocked) throw new ApiError('blocked', result.error || 'Instagram is rate limiting requests.', detail);
+  throw new ApiError('api_error', result?.error || 'Instagram API request failed.', detail);
 }
 
 // Verified 2026-07-28: friendships/pending/ serves at most 200 users and

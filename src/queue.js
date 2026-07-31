@@ -20,7 +20,7 @@ export class ThrottledQueue {
    * @param handler    async (item, index) => { ok, blocked?, loggedOut?, error? }
    * @param pacing     { min, max } delay in ms between items
    * @param onProgress ({ done, total, item, result }) => void
-   * @param onFinish   ({ done, total, halted, stopped, failures }) => void
+   * @param onFinish   ({ done, total, halted, haltReason, haltStatus, stopped, failures }) => void
    */
   constructor({ items, handler, pacing, onProgress, onFinish }) {
     this.items = items;
@@ -32,6 +32,8 @@ export class ThrottledQueue {
     this.running = false;
     this.stopped = false;
     this.halted = null; // set to the blocking error if Instagram pushes back
+    this.haltReason = null; // which kind of push-back it was — see content.js classify
+    this.haltStatus = undefined;
     this.done = 0;
     this.failures = [];
   }
@@ -65,7 +67,18 @@ export class ThrottledQueue {
         // route around the halt just by letting a call throw.
         const code = err?.code;
         result = code === 'blocked' || code === 'logged_out'
-          ? { ok: false, blocked: code === 'blocked', loggedOut: code === 'logged_out', error: err.message || String(err) }
+          ? {
+            ok: false,
+            blocked: code === 'blocked',
+            loggedOut: code === 'logged_out',
+            // Carried through rather than rebuilt: `reason` is the only thing
+            // that can tell a throttle from a dead session downstream, and a
+            // halt that arrives as a thrown error must not arrive knowing less
+            // than the same halt returned as an envelope.
+            reason: err.reason,
+            status: err.status,
+            error: err.message || String(err),
+          }
           : { ok: false, error: String(err) };
       }
 
@@ -77,6 +90,12 @@ export class ThrottledQueue {
       // queue as identical failures.
       if (result && (result.blocked || result.loggedOut)) {
         this.halted = result.error || 'rate_limited';
+        // `halted` is Instagram's own words and goes in the detail view; this
+        // is what the banner's prose is written from. Kept apart because the
+        // raw string is the one thing that must not be paraphrased away — and,
+        // for a soft throttle, reads `login_required` while you are signed in.
+        this.haltReason = result.reason;
+        this.haltStatus = result.status;
         this.onProgress({ done: this.done, total: this.total, item, result });
         break;
       }
@@ -99,6 +118,8 @@ export class ThrottledQueue {
       done: this.done,
       total: this.total,
       halted: this.halted,
+      haltReason: this.haltReason,
+      haltStatus: this.haltStatus,
       stopped: this.stopped,
       failures: this.failures,
     });
