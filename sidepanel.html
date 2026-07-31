@@ -70,11 +70,15 @@
   <button id="banner-dismiss" class="icon-btn">Dismiss</button>
 </div>
 
-<!-- Only ever shown if window.alert turns out to be suppressed here; Chrome
-     makes no promise about JavaScript dialogs in an extension side panel. See
-     panel.js showErrorDetail. -->
+<!-- What the banner's (i) opens. A dialog rather than alert(), which Chrome
+     suppresses in a side panel — and which could not scroll a response body
+     anyway. The reading on top, the response it was read from below it. -->
 <dialog id="error-detail">
   <pre id="error-detail-text"></pre>
+  <div id="error-detail-body-wrap" hidden>
+    <div class="error-detail-label">Response <span id="error-detail-body-note"></span></div>
+    <pre id="error-detail-body"></pre>
+  </div>
   <form method="dialog"><button class="icon-btn">Close</button></form>
 </dialog>
 

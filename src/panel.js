@@ -164,6 +164,9 @@ const jobs = new JobList({
 const STATUS_LINGER = 6000;
 let statusTimer;
 
+/** What the banner's (i) opens, set by whoever raised the banner. */
+let bannerDetail = null;
+
 // ---------------------------------------------------------------- messaging
 
 /** 'loading' | 'ready' | 'error' — CSS gates the working UI on this. */
@@ -188,13 +191,16 @@ function setLoadingText(text) {
   $('loading-text').textContent = text;
 }
 
-function showBanner(text, { retry = false, paused = false, detail = '' } = {}) {
+function showBanner(text, { retry = false, paused = false, detail = null } = {}) {
   $('banner-message').textContent = text;
+  // Held here rather than serialised into a data attribute: a response body is
+  // thousands of characters and belongs nowhere near the DOM until it is asked
+  // for.
+  bannerDetail = detail;
   // The (i) only appears when there is something underneath worth opening. A
   // permanently visible one that sometimes says nothing teaches you not to
   // click it, which costs exactly the times it had the answer.
-  $('banner-detail').hidden = !detail;
-  $('banner-detail').dataset.detail = detail;
+  $('banner-detail').hidden = !hasErrorDetail(detail);
   $('banner-retry').hidden = !retry;
   $('banner-resume').hidden = !paused;
   $('banner-cancel-all').hidden = !paused;
@@ -257,12 +263,13 @@ function describeError(err) {
 }
 
 /**
- * The raw failure, for the banner's (i). The sentence above is a paraphrase and
- * every paraphrase drops something; this is what was actually said, kept
- * verbatim so a report of it is worth reading. Takes the same shape as
- * describeError, so a halt envelope works here too.
+ * The reading, for the top of the (i). What was concluded and from what.
+ *
+ * The banner's sentence is a paraphrase and every paraphrase drops something.
+ * This is the part that fits in a few lines; the response it was read from goes
+ * below it, in full.
  */
-function errorDetail(err) {
+function errorSummary(err) {
   if (!err) return '';
   if (typeof err === 'string') return err;
 
@@ -271,6 +278,9 @@ function errorDetail(err) {
   if (err.reason) lines.push(`Reason: ${err.reason}`);
   if (err.code) lines.push(`Code: ${err.code}`);
   if (err.status !== undefined && err.status !== null) lines.push(`HTTP status: ${err.status}`);
+  // The URL the response *came from*, which is not always the one asked for —
+  // a redirect to the login page is the whole diagnosis when it happens.
+  if (err.url) lines.push(`URL: ${err.url}`);
 
   // reportError also catches plain JavaScript errors from this file, and
   // attributing a TypeError of ours to Instagram would send someone looking in
@@ -281,45 +291,41 @@ function errorDetail(err) {
   return lines.join('\n');
 }
 
+/** Anything worth opening the (i) for? An error with neither is not one. */
+function hasErrorDetail(err) {
+  return Boolean(err) && Boolean(errorSummary(err) || err.body);
+}
+
 /**
- * Show the full text of a failure.
+ * Show a failure in full: the reading, then the response it was read from.
  *
- * `alert` is what this wants to be and is tried first, but Chrome makes no
- * promise about JavaScript dialogs in an extension side panel, and a suppressed
- * one returns instantly having shown nothing — silence being the single outcome
- * an error detail must never have. So the call is timed: a dialog a person
- * actually saw cannot come back in under a millisecond, and anything that fast
- * is taken as suppressed and redrawn as a `<dialog>`, which always renders.
+ * A `<dialog>` rather than `alert` — Chrome suppresses JavaScript dialogs in an
+ * extension side panel, so an alert here shows nothing at all. Which is just as
+ * well: a response body needs to scroll, and an alert cannot.
  */
-function showErrorDetail(text) {
-  if (!text) return;
+function showErrorDetail(err) {
+  if (!hasErrorDetail(err)) return;
 
-  const before = performance.now();
-  try {
-    window.alert(text);
-    if (performance.now() - before > 1) return;
-  } catch {
-    // Not available at all — the fallback below covers it.
-  }
+  $('error-detail-text').textContent = errorSummary(err);
 
-  $('error-detail-text').textContent = text;
+  const body = typeof err === 'string' ? '' : (err.body || '');
+  $('error-detail-body-wrap').hidden = !body;
+  $('error-detail-body').textContent = body;
+  // Said out loud, because a body that stops mid-tag looks like a truncated
+  // *response* — which is a completely different bug to go looking for.
+  const truncated = body && err.bodyLength > body.length;
+  $('error-detail-body-note').textContent = truncated
+    ? `first ${body.length.toLocaleString()} of ${err.bodyLength.toLocaleString()} characters`
+    : `${body.length.toLocaleString()} characters`;
+
+  // Scrolled back to the top each time: the element is reused, and a second
+  // failure opening halfway down the first one's body is its own small lie.
+  $('error-detail-body').scrollTop = 0;
   $('error-detail').showModal();
 }
 
 function reportError(err) {
-  showBanner(describeError(err), { retry: true, detail: errorDetail(err) });
-}
-
-/**
- * A halt, in the shape describeError and errorDetail already read.
- *
- * ThrottledQueue reports a halt as loose fields rather than an error, because
- * the thing that stopped it may have been a returned envelope and never was an
- * error at all. Putting them back into one object is what stops the two message
- * builders needing a second branch for the same failure arriving differently.
- */
-function haltError(message, reason, status) {
-  return { message, reason, status };
+  showBanner(describeError(err), { retry: true, detail: err });
 }
 
 // ------------------------------------------------------------------- render
@@ -1036,7 +1042,7 @@ async function loadPending({ useSnapshot = true } = {}) {
         // but not quietly, since that is exactly the failure above.
         showBanner(
           `"Already follow" may be out of date. ${describeError(err)}`,
-          { detail: errorDetail(err) }
+          { detail: err }
         );
       }
     }
@@ -1118,15 +1124,15 @@ async function runHydrationBatch() {
         await store.saveProfiles(fresh);
       }
     },
-    onFinish: async ({ halted, haltReason, haltStatus, stopped, failures }) => {
+    onFinish: async ({ halted, haltDetail, stopped, failures }) => {
       await store.saveProfiles(fresh);
       state.hydrationQueue = null;
       state.hydrationProgress = null;
       syncHydration();
 
       if (halted) {
-        const halt = haltError(halted, haltReason, haltStatus);
-        showBanner(`Enrichment stopped. ${describeError(halt)}`, { detail: errorDetail(halt) });
+        const halt = haltDetail || { message: halted };
+        showBanner(`Enrichment stopped. ${describeError(halt)}`, { detail: halt });
       } else if (stopped) setStatus('Enrichment stopped.');
       else if (failures.length) setStatus(`Enriched with ${failures.length} failure${failures.length === 1 ? '' : 's'}.`);
       else setStatus('');
@@ -1333,17 +1339,17 @@ function runJob(job) {
 }
 
 /** What is left to say once a job's bar has gone. */
-function reportOutcome(job, { halted, haltReason, haltStatus, stopped, failures = [] }) {
+function reportOutcome(job, { halted, haltDetail, stopped, failures = [] }) {
   const done = jobs.done(job);
 
   if (halted) {
     // Paused rather than stopped, and the wording has to carry that: the rows
     // this job never reached are still held, and everything queued behind it is
     // still queued. The banner is where the way back out lives.
-    const halt = haltError(halted, haltReason, haltStatus);
+    const halt = haltDetail || { message: halted };
     showBanner(
       `Paused after ${done} of ${job.total}. ${describeError(halt)}`,
-      { paused: true, detail: errorDetail(halt) }
+      { paused: true, detail: halt }
     );
   } else if (job.run) {
     // Every other branch below writes to the panel's status line, and a guest
@@ -1806,7 +1812,7 @@ function bind() {
   });
 
   $('banner-dismiss').addEventListener('click', hideBanner);
-  $('banner-detail').addEventListener('click', () => showErrorDetail($('banner-detail').dataset.detail));
+  $('banner-detail').addEventListener('click', () => showErrorDetail(bannerDetail));
 
   // Both views write to storage and neither messages the other, so this is
   // where they meet: handled ids in session, log shards in local.

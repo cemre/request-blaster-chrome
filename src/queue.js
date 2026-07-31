@@ -20,7 +20,7 @@ export class ThrottledQueue {
    * @param handler    async (item, index) => { ok, blocked?, loggedOut?, error? }
    * @param pacing     { min, max } delay in ms between items
    * @param onProgress ({ done, total, item, result }) => void
-   * @param onFinish   ({ done, total, halted, haltReason, haltStatus, stopped, failures }) => void
+   * @param onFinish   ({ done, total, halted, haltDetail, stopped, failures }) => void
    */
   constructor({ items, handler, pacing, onProgress, onFinish }) {
     this.items = items;
@@ -32,8 +32,7 @@ export class ThrottledQueue {
     this.running = false;
     this.stopped = false;
     this.halted = null; // set to the blocking error if Instagram pushes back
-    this.haltReason = null; // which kind of push-back it was — see content.js classify
-    this.haltStatus = undefined;
+    this.haltDetail = null; // the whole failing envelope behind it
     this.done = 0;
     this.failures = [];
   }
@@ -77,6 +76,9 @@ export class ThrottledQueue {
             // than the same halt returned as an envelope.
             reason: err.reason,
             status: err.status,
+            url: err.url,
+            body: err.body,
+            bodyLength: err.bodyLength,
             error: err.message || String(err),
           }
           : { ok: false, error: String(err) };
@@ -90,12 +92,18 @@ export class ThrottledQueue {
       // queue as identical failures.
       if (result && (result.blocked || result.loggedOut)) {
         this.halted = result.error || 'rate_limited';
-        // `halted` is Instagram's own words and goes in the detail view; this
-        // is what the banner's prose is written from. Kept apart because the
-        // raw string is the one thing that must not be paraphrased away — and,
-        // for a soft throttle, reads `login_required` while you are signed in.
-        this.haltReason = result.reason;
-        this.haltStatus = result.status;
+        // `halted` alone is Instagram's own words, which for a soft throttle
+        // read `login_required` while you are signed in — true, and on its own
+        // misleading. The envelope beside it carries the reading and the
+        // response it was read from, which is what the banner and its (i) need.
+        this.haltDetail = {
+          message: this.halted,
+          reason: result.reason,
+          status: result.status,
+          url: result.url,
+          body: result.body,
+          bodyLength: result.bodyLength,
+        };
         this.onProgress({ done: this.done, total: this.total, item, result });
         break;
       }
@@ -118,8 +126,7 @@ export class ThrottledQueue {
       done: this.done,
       total: this.total,
       halted: this.halted,
-      haltReason: this.haltReason,
-      haltStatus: this.haltStatus,
+      haltDetail: this.haltDetail,
       stopped: this.stopped,
       failures: this.failures,
     });

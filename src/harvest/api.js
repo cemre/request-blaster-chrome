@@ -18,7 +18,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const BULK_GAP_MS = 400;
 
 function raise(result) {
-  const detail = { status: result?.status, reason: result?.reason };
+  const detail = {
+    status: result?.status,
+    reason: result?.reason,
+    url: result?.url,
+    body: result?.body,
+    bodyLength: result?.bodyLength,
+  };
   if (result?.loggedOut) throw new ApiError('logged_out', result.error || 'Not signed in to Instagram.', detail);
   if (result?.blocked) throw new ApiError('blocked', result.error || 'Instagram is rate limiting requests.', detail);
   throw new ApiError('api_error', result?.error || 'Instagram API request failed.', detail);

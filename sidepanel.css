@@ -273,11 +273,12 @@ h1 {
   outline-offset: 2px;
 }
 
-/* The fallback detail view. Sized off the panel rather than the content: at
-   260px an unconstrained pre of a wrapped Instagram message pushes the dialog
-   wider than the panel it is centred in. */
+/* The detail view. Sized off the panel rather than the content: at 260px an
+   unconstrained pre of an Instagram HTML page pushes the dialog wider than the
+   panel it is centred in, and taller than the screen. */
 #error-detail {
   max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
   padding: 12px;
   color: var(--text);
   background: var(--bg-elevated);
@@ -288,12 +289,43 @@ h1 {
 #error-detail::backdrop { background: rgb(0 0 0 / 0.5); }
 
 #error-detail pre {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.error-detail-label {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The count beside the label is the quiet half of it: what matters is that the
+   number is there at all, since a body that stops mid-tag has to be readable as
+   truncated rather than as a broken response. */
+.error-detail-label span {
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+/* The scroller. Capped in the viewport's units, not the content's, so a 200-line
+   response and a two-line one open the same dialog at different heights and
+   neither one runs off the screen. */
+#error-detail-body {
+  max-height: 45vh;
+  padding: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#error-detail form { margin-top: 12px; }
 
 /* --------------------------------------------------------------- filters */
 
