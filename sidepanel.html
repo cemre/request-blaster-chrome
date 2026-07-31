@@ -193,6 +193,11 @@
   <input id="log-search" type="search" class="search" placeholder="Search username" autocomplete="off" hidden>
 </section>
 
+<!-- The count holds this slot only until the harvest takes it: mountHarvest puts
+     its button here and hides the count, because the log is a record rather than
+     a worklist and its length is worth less than the one action that acts on it.
+     It stays in the markup so the store build — which ships without the harvest,
+     see build.js — keeps a count here rather than a bar with one control. -->
 <section class="result-bar result-bar-log">
   <button id="log-select-all" type="button" class="chip-button">Select all</button>
   <span id="log-count" class="muted"></span>

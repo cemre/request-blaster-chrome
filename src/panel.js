@@ -817,6 +817,8 @@ function recomputeLog() {
   $('log-older').textContent = `Load older (${remaining} more day${remaining === 1 ? '' : 's'})`;
 
   const shown = state.log.visible.length;
+  // Hidden by mountHarvest when the harvest takes this slot, so this write is a
+  // no-op in the full build and the count only surfaces in the store one.
   $('log-count').textContent = `${shown} action${shown === 1 ? '' : 's'}`;
 
   const empty = $('log-empty');

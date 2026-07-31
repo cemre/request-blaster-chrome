@@ -11,8 +11,6 @@ import { collectCandidates, runHarvest } from './harvest.js';
 import { candidatesFromLogEntries, harvestNotes } from './model.js';
 import { loadHarvested } from './store.js';
 
-const IDLE_STATUS = 'Harvest profiles for follow-back review';
-
 // This feature runs for hours against a private API and writes to disk, so
 // every step says what it did. A harvest that goes quiet is the failure mode
 // worth optimising for — twice now a silent one has been mistaken for a
@@ -25,22 +23,42 @@ const $ = (id) => document.getElementById(id);
 const STYLE_ID = 'harvest-styles';
 
 const STYLES = `
-  .harvest {
-    padding: 7px var(--gap);
-    border-bottom: 1px solid var(--border);
+  /* The log result bar's right-hand slot, where the row count used to sit.
+     margin-left rather than flex-grow on anything else, for the reason the
+     .result-bar comment gives: flexible lengths resolve before auto margins,
+     so a growing sibling would eat the space this needs.
+
+     The surface is overridden because .btn's --secondary-bg is the *same value*
+     as --bg-chrome in light mode, and this band is --bg-chrome — the button was
+     invisible there, reading as bare text. It sat on --bg before this move,
+     where --secondary-bg is fine. Lifted onto --bg-elevated with a border, the
+     way the chips sharing this bar already do it. */
+  #harvest-start {
+    margin-left: auto;
+    background: var(--bg-elevated);
+    border-color: var(--border);
   }
 
-  .harvest-line {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  #harvest-start:hover:not(:disabled) {
+    background: var(--secondary-bg-hover);
+    border-color: var(--border-strong);
+  }
+
+  /* First thing in the scroller, heading the list it reports on, so it scrolls
+     away with the rows rather than holding a band open above every screenful.
+     Keeps --bg rather than the chrome tone for that reason: it belongs to the
+     list, not to the pinned controls above it. */
+  .harvest-note {
+    margin: 0;
+    padding: 7px var(--gap);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
     font-size: 12px;
     color: var(--text-secondary);
   }
 
-  .harvest-line span { flex: 1; font-variant-numeric: tabular-nums; }
-
-  body[data-mode='requests'] .harvest { display: none !important; }
+  body[data-mode='requests'] #harvest-note,
+  body[data-mode='requests'] #harvest-start { display: none !important; }
 
   /* sidepanel.css lights up the row a bulk action is currently writing to
      (.row.is-claimed.is-busy) against its dimmed neighbours; the log has no
@@ -62,26 +80,41 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
-// Stop normally lives on the shared meter, which is reachable from anywhere in
-// the panel rather than only from this row in the Log tab. This run gets a bar
-// in that stack like any other, so it needs no Stop of its own.
-function buildMarkup() {
-  const el = document.createElement('div');
-  el.id = 'harvest';
-  el.className = 'harvest';
-  el.innerHTML = `
-    <div class="harvest-line">
-      <span id="harvest-status">${IDLE_STATUS}</span>
-      <label class="toggle-chip" title="Sweep every follower you don't follow back, instead of only the rows ticked below">
-        <input type="checkbox" id="harvest-all">
-        <span>All followers</span>
-      </label>
-      <button id="harvest-start" class="btn btn-small" title="Fetch profile data and contact sheets into your Downloads folder">Harvest</button>
-    </div>`;
-  return el;
+// The one control. No Stop — this run gets a bar in the toolbar's stack like any
+// other job, and the Stop lives there. No idle status string either: the button
+// already says what it does, and a band above every screenful of rows restating
+// it is what the note below is hidden to avoid.
+function buildButton() {
+  const button = document.createElement('button');
+  button.id = 'harvest-start';
+  button.className = 'btn btn-small';
+  button.title = 'Fetch profile data and contact sheets into your Downloads folder';
+  button.textContent = 'Harvest';
+  return button;
+}
+
+// Hidden unless it has something the toolbar is not already saying. A queued
+// job, a running one and its count all have a bar in the stack — what is left
+// for this row is the account being worked (which no bar has room for), the
+// outcome once the bar has gone, and why a click did nothing.
+function buildNote() {
+  const note = document.createElement('p');
+  note.id = 'harvest-note';
+  note.className = 'harvest-note';
+  note.hidden = true;
+  return note;
 }
 
 /**
+ * PARKED — nothing calls this. It backed the "All followers" toggle, which was
+ * removed from the panel; a harvest now runs on ticked log rows only. Kept, with
+ * its tests, because the sweep it performs is expensive to get right and the
+ * decision to drop it was "we probably won't use this", not "this was wrong".
+ * `collectCandidates` and what it reaches — `fetchAllFollowers`,
+ * `selectNotFollowedBack`, `unionCandidates`, `log.js` — are here for this
+ * function alone and are dead with it. Everything else under src/harvest/ is
+ * live. Re-mounting a control that calls this is all it would take to restore.
+ *
  * Every follower the viewer does not follow back, plus everyone they accepted
  * and never followed. Costs a full follower sweep plus a show_many pass.
  *
@@ -124,7 +157,7 @@ async function planSelection(setStatus, selectedLogEntries) {
   log(`selection: ${entries.length} ticked row(s) -> ${candidates.length} account(s)`, candidates);
 
   if (candidates.length === 0) {
-    setStatus('Tick rows below to harvest them, or turn on All followers.');
+    setStatus('Tick rows below to harvest them.');
     return null;
   }
 
@@ -192,20 +225,23 @@ async function refreshNotes(skipNotes, ids) {
 }
 
 function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, mask) {
+  // An empty message hides the row rather than leaving an empty band above the
+  // list: this is the panel's own rule for anything standing (see #cap-note),
+  // and between runs there is nothing to stand.
   function setHarvestStatus(message) {
-    $('harvest-status').textContent = message;
+    const note = $('harvest-note');
+    note.textContent = message;
+    note.hidden = !message;
   }
 
-  // The buttons are bound FIRST, before anything optional. A previous revision
+  // The button is bound FIRST, before anything optional. A previous revision
   // ran the label updater above this and a throw in it left the button on
   // screen but wired to nothing — indistinguishable from a broken feature.
   $('harvest-start').addEventListener('click', async () => {
-    log('clicked. all-followers =', $('harvest-all')?.checked);
+    log('clicked');
     $('harvest-start').disabled = true;
     try {
-      const plan = $('harvest-all').checked
-        ? await planAllFollowers(setHarvestStatus)
-        : await planSelection(setHarvestStatus, selectedLogEntries);
+      const plan = await planSelection(setHarvestStatus, selectedLogEntries);
 
       if (!plan) {
         log('nothing to harvest — stopping before the confirm');
@@ -230,7 +266,7 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
       });
       if (!confirmed) {
         log('cancelled at the confirm');
-        setHarvestStatus(IDLE_STATUS);
+        setHarvestStatus('');
         $('harvest-start').disabled = false;
         return;
       }
@@ -244,7 +280,10 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
       // The ids are what this run captured, and the panel marks those log rows
       // as spoken for while it waits and while it runs. Most of an all-followers
       // sweep matches no log row at all; those ids simply claim nothing.
-      setHarvestStatus(`${candidates.length} queued.`);
+      // Nothing said here: a queued job already has its own line in the
+      // toolbar's stack ("Harvest 12 · queued") with the Cancel that goes with
+      // it, and this row saying so too would be the copy that scrolls away.
+      setHarvestStatus('');
       log(`queued ${candidates.length}; waiting for the pipeline`);
       queueRun({
         ids: candidates.map((candidate) => candidate.pk),
@@ -256,18 +295,19 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
           log('cancelled before it ran');
           activeHarvest = null;
           $('harvest-start').disabled = false;
-          setHarvestStatus(IDLE_STATUS);
+          setHarvestStatus('');
         },
         run: ({ handled, setStop }) => new Promise((resolve) => {
-          setHarvestStatus('Starting…');
           log('starting; writing index.json first to prove the download path works');
 
           runHarvest({
             candidates,
             onProgress: ({ done, total, item, result }) => {
-              // The status line keeps naming the account — the bar's label has
-              // no room for a username once the counter is in it.
-              setHarvestStatus(`${done} / ${total} — @${mask().username(item.username)}`);
+              // The account only. The bar's label already carries the counter,
+              // and this row carrying a second copy is what made the two read
+              // as competing reports of the same run; what the bar has no space
+              // for, once the count is in it, is who is being worked on.
+              setHarvestStatus(`@${mask().username(item.username)}`);
               // What the bar counts. It reads `total - remaining` off the job,
               // so this is the progress tick as well as the row release — there
               // is no second copy of the number to keep in step with this one.
@@ -340,16 +380,12 @@ function bindControls(selectedLogEntries, confirmAction, queueRun, skipNotes, ma
     }
   });
 
-  // Everything below is a nicety. It runs after the buttons are already live,
-  // and swallows its own failures, so a bug here can never disable them again.
+  // Everything below is a nicety. It runs after the button is already live,
+  // and swallows its own failures, so a bug here can never disable it again.
   function updateSelectionLabel() {
     const button = $('harvest-start');
     if (!button) return;
 
-    if ($('harvest-all')?.checked) {
-      button.textContent = 'Harvest all';
-      return;
-    }
     const count = candidatesFromLogEntries(selectedLogEntries()).length;
     button.textContent = count ? `Harvest ${count}` : 'Harvest';
   }
@@ -427,18 +463,32 @@ export function mountHarvest({
   // account being worked, and screenshot mode can be toggled mid-run.
   mask = () => IDENTITY_MASK,
 } = {}) {
-  const anchor = document.querySelector('.log-controls');
-  if (!anchor) {
-    logError('not mounted: no .log-controls element to anchor to');
+  // Two anchors, because the control and what it reports belong in different
+  // places: the button is pinned with the log's other controls, the note sits
+  // inside the scroller heading the list it reports on.
+  const bar = document.querySelector('.result-bar-log');
+  const listAnchor = $('log-list');
+  if (!bar || !listAnchor) {
+    logError('not mounted: no .result-bar-log and #log-list to anchor to');
     return;
   }
-  if ($('harvest')) {
+  if ($('harvest-start')) {
     logError('not mounted: already mounted once');
     return;
   }
 
   injectStyles();
-  anchor.insertAdjacentElement('afterend', buildMarkup());
+  bar.append(buildButton());
+  listAnchor.insertAdjacentElement('beforebegin', buildNote());
+
+  // The count and this button want the same slot, and at 260px the bar does not
+  // fit both. The button wins where it exists — the log's length is worth less
+  // than the one action that acts on it — but the count stays in the markup and
+  // is merely hidden, so the store build, which strips this whole directory,
+  // still has something in that slot. Hidden rather than removed so panel.js's
+  // own write to it stays a harmless no-op instead of needing a guard.
+  const count = $('log-count');
+  if (count) count.hidden = true;
 
   // A previous session that crashed or was force-closed mid-harvest can leave
   // this off for every download in the browser, not just that batch's — never
@@ -462,6 +512,5 @@ export function mountHarvest({
     return;
   }
 
-  log('mounted. Buttons:', Boolean($('harvest-start')),
-      '| all-followers toggle:', Boolean($('harvest-all')));
+  log('mounted. Button:', Boolean($('harvest-start')), '| note:', Boolean($('harvest-note')));
 }
