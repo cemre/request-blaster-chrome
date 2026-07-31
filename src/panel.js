@@ -1750,6 +1750,10 @@ function bind() {
 async function init() {
   state.settings = await store.loadSettings();
   state.cache = await store.loadProfileCache();
+  // Ids the on-page banner (or a previous instance of this panel) already
+  // handled. Without this, a row it purged while this document wasn't open
+  // to catch the storage event comes right back until the next Refresh.
+  state.doneIds = await store.loadHandledIds();
   // Before bind(), so the renderer is constructed with the right mask rather
   // than painting the real names once and correcting itself.
   await anon.load();
