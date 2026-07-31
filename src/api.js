@@ -21,13 +21,18 @@ export class ApiError extends Error {
    * the narrower fact the content script established at the point of failure,
    * with the response and the cookie in front of it, and is what the panel
    * words its message from — see content.js `classify` and panel.js
-   * `describeError`. `status` rides along so a message can cite it.
+   * `describeError`. The rest is the evidence behind both, shown by the
+   * banner's (i): a reason is a reading of a response, and a reading you cannot
+   * check against the thing it read is worth very little at 2am.
    */
-  constructor(code, message, { status, reason } = {}) {
+  constructor(code, message, { status, reason, url, body, bodyLength } = {}) {
     super(message || code);
     this.code = code;
     this.status = status;
     this.reason = reason;
+    this.url = url;
+    this.body = body;
+    this.bodyLength = bodyLength;
   }
 }
 
@@ -148,7 +153,13 @@ export async function call(op, args = {}) {
 }
 
 function raise(result) {
-  const detail = { status: result?.status, reason: result?.reason };
+  const detail = {
+    status: result?.status,
+    reason: result?.reason,
+    url: result?.url,
+    body: result?.body,
+    bodyLength: result?.bodyLength,
+  };
   // Instagram's own words are kept as the message even where a generic one
   // reads better, because the message is what the banner's detail view shows —
   // the panel's prose comes from `reason` and does not need to live here too.

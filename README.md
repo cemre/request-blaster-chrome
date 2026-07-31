@@ -240,12 +240,30 @@ modules as ESM and is not used by the extension at runtime.
 
 ## Instagram API notes
 
-Everything goes through `www.instagram.com/api/v1`. Verified 2026-07-28:
+Everything goes through `www.instagram.com/api/v1`. Verified 2026-07-28 unless
+noted otherwise:
 
 - `i.instagram.com` answers `friendships/show_many/` and `friendships/show/`
   with **HTTP 200** and `{"status":"fail"}`. `www` works correctly. The content
   script therefore treats a `status: "fail"` body as an error regardless of
   HTTP status.
+- **`friendships/show_many/` is a `GET` with `?user_ids=`, not a `POST` with a
+  form body.** It was the POST until Instagram stopped routing that shape,
+  between 2026-07-28 and 2026-07-30. Measured against a live session on the 30th:
+
+  | request | answer |
+  |---|---|
+  | `GET  /api/v1/friendships/show_many/?user_ids=…` | 200, `friendship_statuses` for every id sent |
+  | `POST /api/v1/friendships/show_many/` + form body | 200, **600KB of the web app shell** |
+  | `POST /api/v1/friendships/show_many/` + JSON body | 404, the same shell |
+  | `POST /api/v1/web/friendships/show_many/` | 404 |
+
+  **A retired route answers 200 with the app shell, not 404** — which is why the
+  break was silent, and worth knowing the next time a call goes quiet. 100 ids is
+  a 1,065-character URL and 198 came back whole, so the 100-per-request chunking
+  has room. `friendships/show/{id}/` still serves one at a time if the bulk route
+  goes for good — 200 requests instead of two, so it is a fallback, not a plan.
+  The writes are unaffected: they live under `/web/` and are still POSTs.
 - **A `401`, a `login_required` message and an HTML body are not proof of a dead
   session.** All three used to raise `logged_out`, and in July 2026 a signed-in
   account was told to sign in — advice it could not act on. `classify` in

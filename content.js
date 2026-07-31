@@ -146,6 +146,29 @@ function htmlResponse(response) {
   };
 }
 
+// How much of a failing response to carry back to the panel. Instagram's HTML
+// runs to megabytes and none of it needs to cross the message boundary to be
+// useful — what identifies a page sits at the top of it. `bodyLength` rides
+// along so a truncated sample can never be read as a short response.
+const BODY_SAMPLE = 8000;
+
+/**
+ * Attach what actually came back to a failure on its way out.
+ *
+ * Every classification above is an interpretation, and an interpretation that
+ * throws away its evidence cannot be checked. This is what the banner's (i)
+ * shows: the resolved URL — which is not always the one asked for — and the
+ * response verbatim.
+ */
+function withResponse(problem, response, text) {
+  return {
+    ...problem,
+    url: response.url || '',
+    body: text.length > BODY_SAMPLE ? text.slice(0, BODY_SAMPLE) : text,
+    bodyLength: text.length,
+  };
+}
+
 async function igFetch(url, init = {}) {
   let response;
   try {
@@ -156,7 +179,7 @@ async function igFetch(url, init = {}) {
       headers: { ...buildHeaders(), ...(init.headers || {}) },
     });
   } catch (err) {
-    return { ok: false, status: 0, error: `network: ${err.message}` };
+    return { ok: false, status: 0, error: `network: ${err.message}`, url };
   }
 
   const text = await response.text();
@@ -166,14 +189,15 @@ async function igFetch(url, init = {}) {
   } catch {
     // Instagram serves HTML instead of JSON in several situations, only one of
     // which is a dead session. See htmlResponse.
-    if (/<html/i.test(text)) return htmlResponse(response);
+    if (/<html/i.test(text)) return withResponse(htmlResponse(response), response, text);
   }
 
   const problem = classify(response.status, body);
-  if (problem) return problem;
+  if (problem) return withResponse(problem, response, text);
 
   if (!response.ok) {
-    return { ok: false, status: response.status, error: body?.message || `HTTP ${response.status}` };
+    const failure = { ok: false, status: response.status, error: body?.message || `HTTP ${response.status}` };
+    return withResponse(failure, response, text);
   }
   return { ok: true, data: body };
 }
@@ -202,11 +226,18 @@ Object.assign(OPERATIONS, {
     return igFetch(url, { method: 'GET' });
   },
 
+  // GET with the ids in the query string. It was a POST with a form body until
+  // Instagram stopped routing that shape — verified 2026-07-30, against a live
+  // signed-in session: the POST answers HTTP 200 with 600KB of the logged-in web
+  // app shell, while this GET answers `friendship_statuses` for every id sent.
+  // The failure was silent for two days because an HTML body used to be read as
+  // a dead session, so the panel said "you are not signed in" to someone who was.
+  //
+  // Also measured that day, so the chunking in fetchFollowStatuses is not
+  // guesswork: 100 ids is a 1,065-character URL, and 198 still came back whole.
   showMany({ userIds }) {
-    return igFetch(`${API_ROOT}/friendships/show_many/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `user_ids=${userIds.join(',')}`,
+    return igFetch(`${API_ROOT}/friendships/show_many/?user_ids=${userIds.join(',')}`, {
+      method: 'GET',
     });
   },
 
