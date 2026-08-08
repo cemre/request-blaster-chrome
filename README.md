@@ -247,23 +247,24 @@ noted otherwise:
   with **HTTP 200** and `{"status":"fail"}`. `www` works correctly. The content
   script therefore treats a `status: "fail"` body as an error regardless of
   HTTP status.
-- **`friendships/show_many/` is a `GET` with `?user_ids=`, not a `POST` with a
-  form body.** It was the POST until Instagram stopped routing that shape,
-  between 2026-07-28 and 2026-07-30. Measured against a live session on the 30th:
+- **`friendships/show_many/` has flipped its accepted method twice now — it is
+  a `POST` with a form body again, not the `GET` with `?user_ids=` this doc
+  used to recommend.** Timeline, each point measured against a live session:
 
-  | request | answer |
-  |---|---|
-  | `GET  /api/v1/friendships/show_many/?user_ids=…` | 200, `friendship_statuses` for every id sent |
-  | `POST /api/v1/friendships/show_many/` + form body | 200, **600KB of the web app shell** |
-  | `POST /api/v1/friendships/show_many/` + JSON body | 404, the same shell |
-  | `POST /api/v1/web/friendships/show_many/` | 404 |
+  | date | working shape | what the other shape did |
+  |---|---|---|
+  | 2026-07-28 | `POST` + form body | — |
+  | 2026-07-30 | `GET` + `?user_ids=` | `POST` + form body → 200, **600KB of the web app shell** |
+  | 2026-08-08 | `POST` + form body | `GET` + `?user_ids=` → **405** |
 
-  **A retired route answers 200 with the app shell, not 404** — which is why the
-  break was silent, and worth knowing the next time a call goes quiet. 100 ids is
-  a 1,065-character URL and 198 came back whole, so the 100-per-request chunking
-  has room. `friendships/show/{id}/` still serves one at a time if the bulk route
-  goes for good — 200 requests instead of two, so it is a fallback, not a plan.
-  The writes are unaffected: they live under `/web/` and are still POSTs.
+  **A retired shape used to answer 200 with the app shell, not an error** — which
+  is why the 07-30 break was silent, and worth knowing the next time a call goes
+  quiet. This one flipped back cleanly with a 405 instead. Given it has already
+  reversed once, treat whichever shape is currently verified as provisional, not
+  settled — re-check live before trusting either direction next time this call
+  starts failing. `friendships/show/{id}/` still serves one at a time if the bulk
+  route goes for good — 200 requests instead of two, so it is a fallback, not a
+  plan. The writes are unaffected: they live under `/web/` and are still POSTs.
 - **A `401`, a `login_required` message and an HTML body are not proof of a dead
   session.** All three used to raise `logged_out`, and in July 2026 a signed-in
   account was told to sign in — advice it could not act on. `classify` in
