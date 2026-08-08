@@ -240,14 +240,21 @@
        overwrite them — and below rather than above because both describe a
        shortfall in what you just scrolled through. -->
   <p id="cap-note" class="list-note" hidden>
-    Instagram only exposes <span id="cap-count"></span> at a time — clear these, then
-    <button id="refresh" type="button" class="link-inline">Refresh</button> for the next batch.
+    Instagram only exposes <span id="cap-count"></span> at a time — clear these, then use
+    Refresh below for the next batch.
   </p>
 
   <!-- Still outside the Spam popover, which is what matters about its
        placement: Mutuals "none" is an enriched-only filter too, and its caveat
        must not sit behind a control the user may never open. -->
   <p id="enriched-warning" class="list-note" hidden></p>
+
+  <!-- The one manual escape hatch: nothing above resurfaces new requests on
+       its own, so there has to be a way to ask Instagram again that isn't
+       buried inside a conditional note. Always on screen, in one place. -->
+  <p class="list-note">
+    <button id="refresh" type="button" class="link-inline">Refresh</button> to check Instagram again.
+  </p>
 
   <div class="log-footer">
     <button id="log-older" class="btn btn-small" hidden>Load older</button>
