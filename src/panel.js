@@ -704,11 +704,14 @@ function syncSelectAll() {
   const selectable = selectableRows();
   const shownAll = selectable.length > 0
     && selectable.every((row) => state.selected.has(row.id));
-  $('select-all').textContent = shownAll ? 'Deselect all' : 'Select all';
+  $('select-all').textContent = shownAll ? 'Deselect all'
+    : selectable.length > 0 ? `Select all (${selectable.length})` : 'Select all';
   $('select-all').disabled = selectable.length === 0;
 
   const plan = history.selectAllPlan(state.log.selectable, state.log.selected);
-  $('log-select-all').textContent = plan.mode === 'deselect' ? 'Deselect all' : 'Select all';
+  const logSelectableCount = state.log.selectable.length;
+  $('log-select-all').textContent = plan.mode === 'deselect' ? 'Deselect all'
+    : logSelectableCount > 0 ? `Select all (${logSelectableCount})` : 'Select all';
   $('log-select-all').disabled = plan.disabled;
 }
 

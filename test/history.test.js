@@ -7,6 +7,7 @@ import {
   FOLLOW,
   REJECT,
   buildRecord,
+  dayCountLabel,
   dayKey,
   dayLabel,
   expiredDayKeys,
@@ -138,6 +139,24 @@ test('groupByDay buckets under headings, newest day first', () => {
 
   assert.deepEqual(groups.map((g) => g.label), ['Today', '26 Jul 2026']);
   assert.deepEqual(groups[0].records.map((r) => r.userId), ['2', '3'], 'newest first within a day');
+});
+
+test('dayCountLabel splits accepted from rejected and folds in accept+follow', () => {
+  const records = [
+    rec({ userId: '1', action: ACCEPT }),
+    rec({ userId: '2', action: ACCEPT_FOLLOW }),
+    rec({ userId: '3', action: REJECT }),
+  ];
+  assert.equal(dayCountLabel(records), '2 accepted · 1 rejected');
+});
+
+test('dayCountLabel omits a zero side rather than printing it', () => {
+  assert.equal(dayCountLabel([rec({ action: ACCEPT })]), '1 accepted');
+  assert.equal(dayCountLabel([rec({ action: REJECT })]), '1 rejected');
+});
+
+test('dayCountLabel leaves follow-backs out of the count entirely', () => {
+  assert.equal(dayCountLabel([rec({ action: FOLLOW })]), '');
 });
 
 // -------------------------------------------------------------- select all

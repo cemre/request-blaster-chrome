@@ -1058,6 +1058,13 @@ body.is-anon .avatar {
   background: var(--bg);
 }
 
+.log-day-count {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
 .log-row {
   display: grid;
   grid-template-columns: auto auto 1fr auto;

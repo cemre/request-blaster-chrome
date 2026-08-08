@@ -9,7 +9,7 @@
 // the mode exists: there is no branch here, only a pair of functions that
 // happen to be pass-throughs most of the time. See src/alias.js.
 
-import { ACTION_LABELS, groupByDay } from './history.js';
+import { ACTION_LABELS, dayCountLabel, groupByDay } from './history.js';
 import { formatCount, formatMutuals, rangeIds } from './model.js';
 import { PLACEHOLDER, resolveAvatar } from './avatars.js';
 import { IDENTITY_MASK } from './alias.js';
@@ -507,7 +507,10 @@ export function renderLog(container, records, {
   const fragment = document.createDocumentFragment();
 
   for (const day of groupByDay(records, now)) {
-    fragment.appendChild(el('div', 'log-day', day.label));
+    const header = el('div', 'log-day', day.label);
+    const summary = dayCountLabel(day.records);
+    if (summary) header.appendChild(el('span', 'log-day-count', ` · ${summary}`));
+    fragment.appendChild(header);
 
     for (const record of day.records) {
       const row = el('div', 'log-row');

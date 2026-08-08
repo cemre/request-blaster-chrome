@@ -170,6 +170,20 @@ export function dayLabel(isoDate, now) {
   return `${Number(day)} ${MONTHS[Number(month) - 1]} ${year}`;
 }
 
+/**
+ * "12 accepted · 3 rejected" for a day's records, omitting a side that is
+ * zero. Follow-backs are left out — they are not a triage outcome, they are
+ * what you did afterward with one you already accepted.
+ */
+export function dayCountLabel(records) {
+  const accepted = records.filter(isAccept).length;
+  const rejected = records.filter(isReject).length;
+  return [
+    accepted ? `${accepted} accepted` : null,
+    rejected ? `${rejected} rejected` : null,
+  ].filter(Boolean).join(' · ');
+}
+
 /** Records bucketed under day headings, newest day first. */
 export function groupByDay(records, now) {
   const days = new Map();
