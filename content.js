@@ -226,18 +226,17 @@ Object.assign(OPERATIONS, {
     return igFetch(url, { method: 'GET' });
   },
 
-  // GET with the ids in the query string. It was a POST with a form body until
-  // Instagram stopped routing that shape — verified 2026-07-30, against a live
-  // signed-in session: the POST answers HTTP 200 with 600KB of the logged-in web
-  // app shell, while this GET answers `friendship_statuses` for every id sent.
-  // The failure was silent for two days because an HTML body used to be read as
-  // a dead session, so the panel said "you are not signed in" to someone who was.
-  //
-  // Also measured that day, so the chunking in fetchFollowStatuses is not
-  // guesswork: 100 ids is a 1,065-character URL, and 198 still came back whole.
+  // POST with a form body. Instagram flipped this endpoint back: the GET-with-
+  // query-string shape from 2026-07-30 now answers HTTP 405, while this POST
+  // shape — the one that was retired that day for allegedly no longer routing —
+  // answers 200 with `friendship_statuses` again, verified 2026-08-08 against a
+  // live signed-in session. Whatever Instagram accepts here has flipped at least
+  // once already, so don't assume today's shape is permanent.
   showMany({ userIds }) {
-    return igFetch(`${API_ROOT}/friendships/show_many/?user_ids=${userIds.join(',')}`, {
-      method: 'GET',
+    return igFetch(`${API_ROOT}/friendships/show_many/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `user_ids=${userIds.join(',')}`,
     });
   },
 

@@ -171,15 +171,17 @@ test('a status: fail body stays a plain failure and halts nothing', async () => 
   assert.equal(result.error, 'Something went wrong');
 });
 
-// Instagram stopped routing the POST form shape and answered it with 600KB of
-// web app shell at HTTP 200 — a silent break, since nothing in the panel was
-// asserting what it sent. These pin the shape that was verified working.
-test('showMany asks by query string, not a form body', async () => {
+// Instagram flipped this endpoint's accepted method again — GET-with-query-
+// string answered 405 on 2026-08-08, and this POST form shape (the one it had
+// supposedly stopped routing on 2026-07-30) is what a live session needed.
+// Pin the shape that's currently verified working, not a guess.
+test('showMany asks with a form body, not a query string', async () => {
   const request = await requestFor('showMany', { userIds: ['1', '2', '3'] });
 
-  assert.equal(request.init.method, 'GET');
-  assert.equal(request.url, 'https://www.instagram.com/api/v1/friendships/show_many/?user_ids=1,2,3');
-  assert.equal(request.init.body, undefined);
+  assert.equal(request.init.method, 'POST');
+  assert.equal(request.url, 'https://www.instagram.com/api/v1/friendships/show_many/');
+  assert.equal(request.init.body, 'user_ids=1,2,3');
+  assert.equal(request.init.headers['Content-Type'], 'application/x-www-form-urlencoded');
 });
 
 test('the write endpoints stay POSTs under /web/', async () => {
