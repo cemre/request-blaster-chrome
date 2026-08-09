@@ -530,15 +530,31 @@ export function formatCountdown(ms) {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mins}:${ss}`;
 }
 
-/** "20 minutes" / "2 hours" / "2 hours 15 minutes" — a wait spoken once, as a
- * sentence, rather than ticked down; formatCountdown is for the live tick. */
-export function formatDuration(ms) {
-  const totalMins = Math.max(0, Math.round(ms / 60000));
-  const hours = Math.floor(totalMins / 60);
-  const mins = totalMins % 60;
+const sameLocalDay = (a, b) => {
+  const x = new Date(a);
+  const y = new Date(b);
+  return x.getFullYear() === y.getFullYear()
+    && x.getMonth() === y.getMonth()
+    && x.getDate() === y.getDate();
+};
 
-  const parts = [];
-  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
-  if (mins > 0 || hours === 0) parts.push(`${mins} minute${mins === 1 ? '' : 's'}`);
-  return parts.join(' ');
+/**
+ * When a wait ends, named as a time rather than a length: "1:05 PM", or
+ * "tomorrow at 9:20 AM" once the wait crosses midnight.
+ *
+ * A length is only true in the second it is written — "waiting 1 hour" still
+ * says an hour forty minutes later — where a time stays true for the whole
+ * wait and needs no redrawing. formatCountdown covers how much is left, at
+ * stopwatch precision, for the meter that ticks alongside it.
+ *
+ * The day matters because a bare clock time a day out names an hour that
+ * already went past today. Waits are capped at RATE_LIMIT_ASSUMED_MS, so
+ * tomorrow is the furthest one can reach and no further label is needed.
+ *
+ * Takes the clock formatter rather than owning one: the locale-aware
+ * Intl instance belongs with the rest of the panel's formatting.
+ */
+export function retryTimeLabel(at, formatTime, now = Date.now()) {
+  const time = formatTime(at);
+  return sameLocalDay(at, now) ? time : `tomorrow at ${time}`;
 }
