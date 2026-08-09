@@ -1,0 +1,29 @@
+# Harvested Instagram profile data — photos and written assessments of real
+# people. Never commit these.
+follow-back-review/
+docs/follow-back/batches/
+
+# Scratch workspace for the subagent-driven workflow. Never ships, never commits —
+# an unpacked extension folder is loaded as-is, so stray files there are shipped files.
+.superpowers/
+
+# Claude Code worktrees. These are full checkouts of this repo that sessions
+# create for isolated work — committing one would nest the repo inside itself.
+**/.claude/worktrees/
+
+# Per-machine Claude settings; the shared .claude/settings.json is not ignored.
+**/.claude/settings.local.json
+
+# macOS, and this repo lives in iCloud Drive
+.DS_Store
+._*
+.Trashes
+
+# Dev-only. The extension ships no dependencies; package.json exists so
+# `node --test` loads src/model.js as ESM.
+node_modules/
+
+# Store packages built by `npm run build`. Rebuildable from any commit, and the
+# zip is a build artifact rather than source — the manifest version bump that
+# accompanies it is the part worth committing.
+dist/

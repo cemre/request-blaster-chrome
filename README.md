@@ -289,4 +289,4 @@ noted otherwise:
   `cdninstagram.com` / `fbcdn.net` over HTTPS so it can't be used as a general
   fetch relay.
 
-Full design and findings: [`docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md`](../docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md)
+Full design and findings: [`docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md`](docs/superpowers/specs/2026-07-28-instagram-request-triage-sidepanel-design.md)
