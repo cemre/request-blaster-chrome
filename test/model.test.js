@@ -4,16 +4,24 @@ import assert from 'node:assert/strict';
 import {
   BOT_RATIO_MIN_FOLLOWING,
   DEFAULT_FILTERS,
+  RATE_LIMIT_ASSUMED_MS,
+  RATE_LIMIT_DOUBLING_CAP_MS,
+  RATE_LIMIT_FLOOR_MS,
+  RATE_LIMIT_SECOND_CAP_MS,
   applyFilters,
   approximateMutuals,
   countHiddenByUnknownMutuals,
   filtersActive,
   formatCount,
+  formatCountdown,
+  formatDuration,
   formatMutuals,
   formatShownCount,
   isBotRatio,
   isDefaultPic,
   mergeRows,
+  nextRateLimitWait,
+  noteRateLimitBlock,
   parseMutualCount,
   rangeIds,
   sortRows,
@@ -578,4 +586,143 @@ test('rangeIds covers nothing when the clicked row is not in the list', () => {
   assert.deepEqual(rangeIds(ROWS, 'a', 'gone'), []);
   assert.deepEqual(rangeIds([], 'a', 'b'), []);
   assert.deepEqual(rangeIds(undefined, 'a', 'b'), []);
+});
+
+// ------------------------------------------------------------ rate limits
+
+test('nextRateLimitWait starts a fresh episode at the floor', () => {
+  const { wait, epoch } = nextRateLimitWait(null, 1_000_000);
+  assert.equal(wait, RATE_LIMIT_FLOOR_MS);
+  assert.deepEqual(epoch, {
+    firstBlockedAt: 1_000_000,
+    lastBlockedAt: 1_000_000,
+    cooldownMs: RATE_LIMIT_FLOOR_MS,
+  });
+});
+
+test('nextRateLimitWait climbs the ladder — 5, 10, 20, 40 min, 1h, 2h — before it ever projects toward 24h', () => {
+  const t0 = 1_000_000;
+  let epoch = null;
+  const waits = [];
+  let now = t0;
+  for (let i = 0; i < 6; i += 1) {
+    const result = nextRateLimitWait(epoch, now);
+    waits.push(result.wait);
+    epoch = result.epoch;
+    now += result.wait; // pretend the wait actually elapsed before the next block
+  }
+  assert.deepEqual(waits, [
+    RATE_LIMIT_FLOOR_MS,
+    RATE_LIMIT_FLOOR_MS * 2,
+    RATE_LIMIT_FLOOR_MS * 4,
+    RATE_LIMIT_FLOOR_MS * 8,
+    RATE_LIMIT_DOUBLING_CAP_MS,
+    RATE_LIMIT_SECOND_CAP_MS,
+  ]);
+});
+
+test('nextRateLimitWait survives a "restart" — a fresh call with the persisted epoch continues the ladder instead of resetting to the floor', () => {
+  const t0 = 1_000_000;
+  const afterFirstBlock = nextRateLimitWait(null, t0);
+  // Simulate losing every in-memory variable except what got persisted, then
+  // calling again as if this were a brand new runAutoTriage after a restart.
+  const afterRestart = nextRateLimitWait(afterFirstBlock.epoch, t0 + afterFirstBlock.wait);
+  assert.equal(afterRestart.wait, RATE_LIMIT_FLOOR_MS * 2);
+  assert.notEqual(afterRestart.wait, RATE_LIMIT_FLOOR_MS);
+});
+
+test('nextRateLimitWait stays at the second cap once — the step the doubling cap alone used to skip — before projecting', () => {
+  const t0 = 1_000_000;
+  const epoch = {
+    firstBlockedAt: t0,
+    lastBlockedAt: t0 + 55 * 60 * 1000,
+    cooldownMs: RATE_LIMIT_DOUBLING_CAP_MS,
+  };
+  const { wait, epoch: next } = nextRateLimitWait(epoch, t0 + 60 * 60 * 1000);
+  assert.equal(wait, RATE_LIMIT_SECOND_CAP_MS);
+  assert.equal(next.firstBlockedAt, t0);
+});
+
+test('nextRateLimitWait switches to time-projection once the second cap has been used and a block is still there', () => {
+  const t0 = 1_000_000;
+  const epoch = {
+    firstBlockedAt: t0,
+    lastBlockedAt: t0 + 4 * 60 * 60 * 1000,
+    cooldownMs: RATE_LIMIT_SECOND_CAP_MS,
+  };
+  const now = t0 + 4.25 * 60 * 60 * 1000;
+  const { wait, epoch: next } = nextRateLimitWait(epoch, now);
+  // Aims at 24h from the *original* block, not another two hours from now.
+  assert.equal(wait, RATE_LIMIT_ASSUMED_MS - (now - t0));
+  assert.equal(next.firstBlockedAt, t0);
+});
+
+test('nextRateLimitWait never lets time-projection undercut the second cap', () => {
+  const t0 = 1_000_000;
+  const epoch = { firstBlockedAt: t0, lastBlockedAt: t0, cooldownMs: RATE_LIMIT_SECOND_CAP_MS };
+  // Nearly 24h in already — projecting the remainder alone would be a wait
+  // shorter than the cap, which would mean going *faster* than the ladder
+  // just because the guess is about to run out.
+  const now = t0 + RATE_LIMIT_ASSUMED_MS - 1000;
+  const { wait } = nextRateLimitWait(epoch, now);
+  assert.equal(wait, RATE_LIMIT_SECOND_CAP_MS);
+});
+
+test('nextRateLimitWait restarts the window from now once the 24h guess has elapsed and it is still blocked', () => {
+  const t0 = 1_000_000;
+  const epoch = { firstBlockedAt: t0, lastBlockedAt: t0, cooldownMs: RATE_LIMIT_SECOND_CAP_MS };
+  const now = t0 + RATE_LIMIT_ASSUMED_MS + 60_000;
+  const { wait, epoch: next } = nextRateLimitWait(epoch, now);
+  assert.equal(wait, RATE_LIMIT_ASSUMED_MS);
+  assert.equal(next.firstBlockedAt, now);
+});
+
+test('nextRateLimitWait treats a days-old epoch as unrelated rather than resuming it', () => {
+  const t0 = 1_000_000;
+  const epoch = { firstBlockedAt: t0, lastBlockedAt: t0, cooldownMs: RATE_LIMIT_ASSUMED_MS };
+  const now = t0 + 3 * RATE_LIMIT_ASSUMED_MS; // days later — a separate block, not this episode
+  const { wait, epoch: next } = nextRateLimitWait(epoch, now);
+  assert.equal(wait, RATE_LIMIT_FLOOR_MS);
+  assert.equal(next.firstBlockedAt, now);
+});
+
+test('formatCountdown reads as a stopwatch — M:SS under an hour, H:MM:SS past it', () => {
+  assert.equal(formatCountdown(5 * 60 * 1000 + 9000), '5:09');
+  assert.equal(formatCountdown(0), '0:00');
+  assert.equal(formatCountdown(23 * 3600 * 1000 + 5 * 60 * 1000 + 9000), '23:05:09');
+});
+
+test('formatDuration speaks a wait as a sentence, not a clock', () => {
+  assert.equal(formatDuration(5 * 60 * 1000), '5 minutes');
+  assert.equal(formatDuration(60 * 1000), '1 minute');
+  assert.equal(formatDuration(60 * 60 * 1000), '1 hour');
+  assert.equal(formatDuration(2 * 60 * 60 * 1000), '2 hours');
+  assert.equal(formatDuration(22 * 60 * 60 * 1000 + 45 * 60 * 1000), '22 hours 45 minutes');
+  assert.equal(formatDuration(0), '0 minutes');
+});
+
+test('noteRateLimitBlock records the episode start without stepping the ladder', () => {
+  const t0 = 1_000_000;
+  const { firstBlockedAt, epoch } = noteRateLimitBlock(null, t0);
+  assert.equal(firstBlockedAt, t0);
+  assert.deepEqual(epoch, { firstBlockedAt: t0, lastBlockedAt: t0, cooldownMs: RATE_LIMIT_FLOOR_MS });
+});
+
+test('noteRateLimitBlock leaves an in-progress ladder untouched, unlike nextRateLimitWait', () => {
+  const t0 = 1_000_000;
+  const epoch = { firstBlockedAt: t0, lastBlockedAt: t0, cooldownMs: RATE_LIMIT_SECOND_CAP_MS };
+  const now = t0 + 10 * 60 * 1000;
+  const result = noteRateLimitBlock(epoch, now);
+  assert.equal(result.firstBlockedAt, t0);
+  assert.equal(result.epoch.cooldownMs, RATE_LIMIT_SECOND_CAP_MS);
+  assert.equal(result.epoch.lastBlockedAt, now);
+});
+
+test('noteRateLimitBlock treats a days-old epoch as unrelated, same as nextRateLimitWait', () => {
+  const t0 = 1_000_000;
+  const epoch = { firstBlockedAt: t0, lastBlockedAt: t0, cooldownMs: RATE_LIMIT_ASSUMED_MS };
+  const now = t0 + 3 * RATE_LIMIT_ASSUMED_MS;
+  const { firstBlockedAt, epoch: next } = noteRateLimitBlock(epoch, now);
+  assert.equal(firstBlockedAt, now);
+  assert.equal(next.cooldownMs, RATE_LIMIT_FLOOR_MS);
 });

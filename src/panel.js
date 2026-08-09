@@ -19,8 +19,12 @@ import {
   applyFilters,
   countHiddenByUnknownMutuals,
   filtersActive,
+  formatCountdown,
+  formatDuration,
   formatShownCount,
   mergeRows,
+  nextRateLimitWait,
+  noteRateLimitBlock,
   rangeIds,
   sortRows,
   splitByMutuals,
@@ -262,6 +266,35 @@ function describeError(err) {
     default:
       return err?.message || String(err);
   }
+}
+
+// Same options as render.js's log-row timeFormat, so a time reads the same
+// wherever the panel shows one.
+const rateLimitTimeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * The shared rate-limit epoch's origin time, for a halt anywhere outside
+ * Auto's own retry loop — a manual pause does not wait anything out itself,
+ * so this only records *when* the episode started (model.js's
+ * noteRateLimitBlock) rather than stepping the ladder Auto's own wait is
+ * computed from; see runAutoTriage's waitOutRateLimit for that side.
+ *
+ * Returns null for a logged-out halt, or when there is no detail at all —
+ * that is a different problem, unrelated to how long a rate limit has been
+ * running, and not something to backdate the shared clock over.
+ */
+async function noteRateLimitOrigin(haltDetail) {
+  if (!haltDetail || haltDetail.loggedOut) return null;
+  const { firstBlockedAt, epoch } = noteRateLimitBlock(await store.loadRateLimitEpoch());
+  await store.saveRateLimitEpoch(epoch);
+  return rateLimitTimeFormat.format(firstBlockedAt);
+}
+
+/** " First rate limited at 3:42 PM." — appended once there is somewhere to
+ * point back to; empty otherwise, so a message reads the same as it always
+ * has when there is nothing to add. */
+function rateLimitOriginNote(firstBlockedAt) {
+  return firstBlockedAt ? ` First rate limited at ${firstBlockedAt}.` : '';
 }
 
 /**
@@ -720,14 +753,11 @@ function syncSelectAll() {
   const selectable = selectableRows();
   const shownAll = selectable.length > 0
     && selectable.every((row) => state.selected.has(row.id));
-  $('select-all').textContent = shownAll ? 'Deselect all'
-    : selectable.length > 0 ? `Select all (${selectable.length})` : 'Select all';
+  $('select-all').textContent = shownAll ? 'Deselect all' : 'Select all';
   $('select-all').disabled = selectable.length === 0;
 
   const plan = history.selectAllPlan(state.log.selectable, state.log.selected);
-  const logSelectableCount = state.log.selectable.length;
-  $('log-select-all').textContent = plan.mode === 'deselect' ? 'Deselect all'
-    : logSelectableCount > 0 ? `Select all (${logSelectableCount})` : 'Select all';
+  $('log-select-all').textContent = plan.mode === 'deselect' ? 'Deselect all' : 'Select all';
   $('log-select-all').disabled = plan.disabled;
 }
 
@@ -966,6 +996,26 @@ function recomputeLog() {
     .filter((id) => !state.log.skipNotes[id] && !state.claims.log.has(id));
 
   updateBulkBar();
+  syncLogTabCounts();
+}
+
+/**
+ * The tally on the Accepted/Rejected sub-tabs themselves, same idea as the
+ * Spam chip's own count. Off the whole loaded log rather than the active
+ * kind filter or search — those narrow what the list shows, but a badge on
+ * the tab that switches the filter has to keep counting everything the
+ * filter could switch to, not just whichever side happens to be selected.
+ * `.log-controls` is display:none outside the Log tab, which is what keeps
+ * this from needing a mode check of its own.
+ */
+function syncLogTabCounts() {
+  const accepted = state.log.records.filter(history.isAccept).length;
+  const rejected = state.log.records.filter(history.isReject).length;
+
+  $('log-tab-accepted-count').textContent = String(accepted);
+  $('log-tab-accepted-count').hidden = accepted === 0;
+  $('log-tab-rejected-count').textContent = String(rejected);
+  $('log-tab-rejected-count').hidden = rejected === 0;
 }
 
 /** Queue a follow-back for everyone selected in the log. */
@@ -1197,10 +1247,17 @@ async function runHydrationBatch(targets = state.visible.filter((row) => !row.en
       const { halted, haltDetail, stopped, failures } = result;
       if (halted) {
         const halt = haltDetail || { message: halted };
-        showBanner(`Enrichment stopped. ${describeError(halt)}`, { detail: halt });
+        const firstBlockedAt = await noteRateLimitOrigin(halt);
+        showBanner(
+          `Enrichment stopped. ${describeError(halt)}${rateLimitOriginNote(firstBlockedAt)}`,
+          { detail: halt }
+        );
       } else if (stopped) setStatus('Enrichment stopped.');
       else if (failures.length) setStatus(`Enriched with ${failures.length} failure${failures.length === 1 ? '' : 's'}.`);
-      else setStatus('');
+      else {
+        setStatus('');
+        await store.clearRateLimitEpoch();
+      }
 
       recompute();
     },
@@ -1405,7 +1462,7 @@ function runJob(job) {
 }
 
 /** What is left to say once a job's bar has gone. */
-function reportOutcome(job, { halted, haltDetail, stopped, failures = [] }) {
+async function reportOutcome(job, { halted, haltDetail, stopped, failures = [] }) {
   const done = jobs.done(job);
 
   if (halted) {
@@ -1413,8 +1470,9 @@ function reportOutcome(job, { halted, haltDetail, stopped, failures = [] }) {
     // this job never reached are still held, and everything queued behind it is
     // still queued. The banner is where the way back out lives.
     const halt = haltDetail || { message: halted };
+    const firstBlockedAt = await noteRateLimitOrigin(halt);
     showBanner(
-      `Paused after ${done} of ${job.total}. ${describeError(halt)}`,
+      `Paused after ${done} of ${job.total}. ${describeError(halt)}${rateLimitOriginNote(firstBlockedAt)}`,
       { paused: true, detail: halt }
     );
   } else if (job.run) {
@@ -1431,8 +1489,11 @@ function reportOutcome(job, { halted, haltDetail, stopped, failures = [] }) {
     setStatus(`Done, ${failures.length} failed.`);
   } else {
     // A clean run says nothing: every row it touched marked itself and left the
-    // list, and the log holds the tally for as long as anyone wants it.
+    // list, and the log holds the tally for as long as anyone wants it. It's
+    // also the clearest evidence a rate limit has lifted, of anywhere in the
+    // app — so the shared clock resets here, not just after an Auto phase.
     setStatus('');
+    await store.clearRateLimitEpoch();
   }
 
   if (job.scope === 'log') {
@@ -1503,9 +1564,6 @@ function startAutoTriage(minMutuals) {
   });
 }
 
-/** How long Auto waits out a block before trying again on its own. */
-const RATE_LIMIT_COOLDOWN_MS = 300000;
-
 async function runAutoTriage(job, minMutuals) {
   let stopped = false;
   let activeQueue = null;
@@ -1516,25 +1574,41 @@ async function runAutoTriage(job, minMutuals) {
 
   /**
    * A block does not need someone at the keyboard to clear — Auto exists to
-   * run unattended, so it waits the cooldown out itself instead of pausing
-   * the pipeline for a manual Resume, the way every other job still does.
-   * Ticks the bar once a second so the wait reads as progress rather than a
-   * stall, and checks `stopped` on every tick so Stop still lands within a
-   * second rather than only once the whole cooldown has run out.
+   * run unattended, so it waits the block out itself instead of pausing the
+   * pipeline for a manual Resume, the way every other job still does. Ticks
+   * the bar once a second so the wait reads as progress rather than a stall,
+   * and checks `stopped` on every tick so Stop still lands within a second
+   * rather than only once the whole wait has run out.
+   *
+   * How long to wait — and whether it escalates toward a 24-hour lockout once
+   * plain doubling stops helping — is nextRateLimitWait's call, not this
+   * function's; see model.js. What matters here is that the epoch it hands
+   * back is persisted via store.saveRateLimitEpoch (chrome.storage.local)
+   * rather than kept in a local variable: a local resets to the floor across
+   * a browser or computer restart, which is exactly the moment this needs to
+   * remember the *original* block instead of forgetting it.
    */
   const waitOutRateLimit = async (haltDetail) => {
     const halt = haltDetail || { message: 'rate_limited' };
+    const { wait, epoch } = nextRateLimitWait(await store.loadRateLimitEpoch());
+    await store.saveRateLimitEpoch(epoch);
+
+    // Said once, up front, rather than on every tick below: the countdown
+    // already says how much is left, so repeating the start time next to it
+    // every second would just be noise.
+    const firstBlockedAt = rateLimitTimeFormat.format(epoch.firstBlockedAt);
     // Instagram's own reading of the block, via describeError, is left for
     // the (i) rather than said again here — it is the same fact the sentence
     // above it just stated in Auto's own words.
-    showBanner('Auto is waiting out a rate limit and will retry on its own.', { detail: halt });
+    showBanner(
+      `Auto hit a rate limit at ${firstBlockedAt} and is waiting ${formatDuration(wait)} before retrying.`,
+      { detail: halt }
+    );
 
-    let remaining = RATE_LIMIT_COOLDOWN_MS;
+    let remaining = wait;
     while (remaining > 0 && !stopped) {
-      const mins = Math.floor(remaining / 60000);
-      const secs = Math.floor((remaining % 60000) / 1000);
-      job.statusText = `Rate limited — retrying in ${mins}:${String(secs).padStart(2, '0')}…`;
-      job.statusPct = Math.round(100 * (1 - remaining / RATE_LIMIT_COOLDOWN_MS));
+      job.statusText = `Rate limited — retrying in ${formatCountdown(remaining)}…`;
+      job.statusPct = Math.round(100 * (1 - remaining / wait));
       syncRunStack();
       await sleep(1000);
       remaining -= 1000;
@@ -1621,6 +1695,11 @@ async function runAutoTriage(job, minMutuals) {
         if (stopped) break;
         continue;
       }
+      // A phase that got all the way through without a block is what
+      // "succeed" means for the backoff — clear the persisted epoch so
+      // whatever the next block turns out to be starts a fresh episode
+      // rather than picking up where this unrelated one left off.
+      await store.clearRateLimitEpoch();
       if (stopped) break;
     }
 
@@ -1651,6 +1730,7 @@ async function runAutoTriage(job, minMutuals) {
         if (stopped) break;
         continue;
       }
+      await store.clearRateLimitEpoch();
       if (stopped) break;
     }
 
@@ -1667,6 +1747,7 @@ async function runAutoTriage(job, minMutuals) {
         if (stopped) break;
         continue;
       }
+      await store.clearRateLimitEpoch();
       if (stopped) break;
     }
 

@@ -380,3 +380,112 @@ export function rangeIds(ordered = [], anchorId, clickedId) {
 
   return ordered.slice(Math.min(from, to), Math.max(from, to) + 1);
 }
+
+// ------------------------------------------------------------ rate limits
+
+/** The first wait, when a block has no history yet — most blocks are brief. */
+export const RATE_LIMIT_FLOOR_MS = 5 * 60 * 1000;
+/** Where plain doubling stops: 5, 10, 20, 40 min, then this. */
+export const RATE_LIMIT_DOUBLING_CAP_MS = 60 * 60 * 1000;
+/** One more step past the doubling cap before giving up on short waits
+ * entirely — a block still there after an hour gets one more hour's benefit
+ * of the doubt before the time-projection below takes over. */
+export const RATE_LIMIT_SECOND_CAP_MS = 2 * 60 * 60 * 1000;
+/** Instagram's longest observed lockout. Once the second cap is used and a
+ * block is still there, later waits aim at this many ms from the *original*
+ * block instead of continuing to poll every two hours. */
+export const RATE_LIMIT_ASSUMED_MS = 24 * 60 * 60 * 1000;
+/** An episode this old is not "the same lockout, resumed" by any reading —
+ * treated as a fresh one instead of projecting off a block from days ago. */
+const RATE_LIMIT_STALE_AFTER_MS = 2 * RATE_LIMIT_ASSUMED_MS;
+
+/**
+ * How long Auto should wait out a rate-limit block, and the epoch to persist
+ * for next time.
+ *
+ * `epoch` is meant to live in chrome.storage.local rather than memory, so
+ * restarting the browser or computer — the thing people reach for when a
+ * wait feels stuck — resumes the backoff already in progress instead of
+ * quietly resetting it to the floor and retrying a 24-hour lockout every five
+ * minutes forever. `epoch.cooldownMs` is the wait that was just used, not the
+ * next one — nextRateLimitWait derives the next step from it fresh each call.
+ *
+ * The ladder: 5, 10, 20, 40 min, 1h, 2h — that covers a block that clears
+ * within a couple of hours, which is most of them. Once the 2h step has been
+ * used and Instagram is *still* blocking, that is itself evidence of a longer
+ * lockout, so later waits stop polling every two hours and instead aim at
+ * RATE_LIMIT_ASSUMED_MS timed from the original block — how close the
+ * *original* block is to that assumed window, not the block that just
+ * happened. If that guess turns out wrong (still blocked once the assumed
+ * window has passed), the window restarts from now rather than growing
+ * without bound.
+ */
+export function nextRateLimitWait(epoch, now = Date.now()) {
+  const lastSeen = epoch?.lastBlockedAt ?? epoch?.firstBlockedAt ?? -Infinity;
+  const fresh = !epoch || now - lastSeen > RATE_LIMIT_STALE_AFTER_MS;
+
+  let firstBlockedAt = fresh ? now : epoch.firstBlockedAt;
+  const prevWait = fresh ? null : epoch.cooldownMs;
+
+  let wait;
+  if (prevWait === null) {
+    wait = RATE_LIMIT_FLOOR_MS;
+  } else if (prevWait < RATE_LIMIT_DOUBLING_CAP_MS) {
+    wait = Math.min(prevWait * 2, RATE_LIMIT_DOUBLING_CAP_MS);
+  } else if (prevWait < RATE_LIMIT_SECOND_CAP_MS) {
+    wait = RATE_LIMIT_SECOND_CAP_MS;
+  } else {
+    const elapsed = now - firstBlockedAt;
+    if (elapsed >= RATE_LIMIT_ASSUMED_MS) {
+      firstBlockedAt = now;
+      wait = RATE_LIMIT_ASSUMED_MS;
+    } else {
+      wait = Math.max(RATE_LIMIT_SECOND_CAP_MS, RATE_LIMIT_ASSUMED_MS - elapsed);
+    }
+  }
+
+  return { wait, epoch: { firstBlockedAt, lastBlockedAt: now, cooldownMs: wait } };
+}
+
+/**
+ * Record that a block just happened, without stepping the backoff ladder.
+ *
+ * For a halt outside Auto's own retry loop — a manual pause does not wait
+ * anything out itself, so advancing cooldownMs on its behalf would misrepresent
+ * how long Auto actually waited once it picks the episode back up. This only
+ * keeps the episode's original time straight (and its staleness clock
+ * ticking), which is what a banner elsewhere needs to say when the rate limit
+ * now being reported first started.
+ */
+export function noteRateLimitBlock(epoch, now = Date.now()) {
+  const lastSeen = epoch?.lastBlockedAt ?? epoch?.firstBlockedAt ?? -Infinity;
+  const fresh = !epoch || now - lastSeen > RATE_LIMIT_STALE_AFTER_MS;
+  const firstBlockedAt = fresh ? now : epoch.firstBlockedAt;
+  const cooldownMs = fresh ? RATE_LIMIT_FLOOR_MS : epoch.cooldownMs;
+  return { firstBlockedAt, epoch: { firstBlockedAt, lastBlockedAt: now, cooldownMs } };
+}
+
+/** "23:05:09" once past an hour, "5:09" under — the countdown reads as a
+ * stopwatch either way instead of triple-digit minutes. */
+export function formatCountdown(ms) {
+  const totalSecs = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
+  const mm = String(mins).padStart(2, '0');
+  const ss = String(secs).padStart(2, '0');
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mins}:${ss}`;
+}
+
+/** "20 minutes" / "2 hours" / "2 hours 15 minutes" — a wait spoken once, as a
+ * sentence, rather than ticked down; formatCountdown is for the live tick. */
+export function formatDuration(ms) {
+  const totalMins = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+
+  const parts = [];
+  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  if (mins > 0 || hours === 0) parts.push(`${mins} minute${mins === 1 ? '' : 's'}`);
+  return parts.join(' ');
+}

@@ -173,6 +173,7 @@ h1 {
 
 .modes {
   display: flex;
+  align-items: baseline;
   gap: 16px;
   flex: none;
 }
@@ -201,6 +202,7 @@ h1 {
   font-weight: 500;
   border-bottom-color: var(--text);
 }
+
 
 /* Sized to its contents and pushed right, rather than given a share of the bar:
    the tabs must keep their own width at every panel width, and this yields
@@ -1090,6 +1092,23 @@ body.is-anon .avatar {
   border-color: var(--border-strong);
   color: var(--text);
   font-weight: 500;
+}
+
+/* A pill within the pill, same idea as .chip-count beside Spam. --bg was the
+   first attempt at a colour that needed no per-state variant, on the theory
+   that it would read as a punched-out hole either way — it does in dark mode,
+   where --bg is black against the button's #262626, but in light mode --bg
+   and --bg-elevated are both #FFFFFF, so the "pill" was invisible against its
+   own button. --secondary-bg has real contrast against --bg-elevated in both
+   themes, which --bg only happened to have in one of them. */
+.log-tab-count {
+  margin-left: 5px;
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+  background: var(--secondary-bg);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Sticks so you always know which day you have scrolled into. */

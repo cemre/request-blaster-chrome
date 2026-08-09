@@ -6,6 +6,7 @@ import { DAY_PREFIX, LOG_INDEX_KEY, dayKey, expiredDayKeys } from './history.js'
 const CACHE_KEY = 'profileCache';
 const SETTINGS_KEY = 'settings';
 const SNAPSHOT_KEY = 'pendingSnapshot';
+const RATE_LIMIT_KEY = 'rateLimitEpoch';
 
 // Ids accepted or rejected this session, by either the panel or the on-page
 // banner. Both watch this key, which is how the two views stay consistent
@@ -104,6 +105,35 @@ export async function addHandledId(id) {
     const handled = await loadHandledIds();
     handled.add(id);
     await chrome.storage.session.set({ [HANDLED_KEY]: [...handled] });
+  } catch {
+    /* ignore */
+  }
+}
+
+// Local rather than session: the whole point is surviving a browser or
+// computer restart, which is exactly what session storage does not.
+// See model.js's nextRateLimitWait for what the fields mean.
+
+export async function loadRateLimitEpoch() {
+  try {
+    const stored = await chrome.storage.local.get(RATE_LIMIT_KEY);
+    return stored[RATE_LIMIT_KEY] || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveRateLimitEpoch(epoch) {
+  try {
+    await chrome.storage.local.set({ [RATE_LIMIT_KEY]: epoch });
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function clearRateLimitEpoch() {
+  try {
+    await chrome.storage.local.remove(RATE_LIMIT_KEY);
   } catch {
     /* ignore */
   }
