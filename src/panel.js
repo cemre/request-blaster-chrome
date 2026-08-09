@@ -238,21 +238,35 @@ function hideBanner() {
  * signed-in account hitting a throttled bulk endpoint was told to sign in —
  * advice that cannot work, because they already are. content.js now settles
  * that at the point of failure, cookie in hand, and `reason` is what it settled.
+ *
+ * `firstBlockedAt`, when given, is folded into the same sentence rather than
+ * appended as its own — "since 10:31 AM" reads as one thought, where a bolted-on
+ * "First rate limited at 10:31 AM." repeats a fact the sentence just stated.
  */
-function describeError(err) {
+function describeError(err, firstBlockedAt = null) {
   switch (err?.reason) {
     case 'signed_out':
       return 'You are signed out of Instagram. Sign in on the main tab.';
     case 'session_rejected':
-      return 'Instagram throttled you. Try again in a few minutes.';
+      return firstBlockedAt
+        ? `Instagram has been throttling you since ${firstBlockedAt}. Try again in a few minutes.`
+        : 'Instagram throttled you. Try again in a few minutes.';
     case 'checkpoint':
-      return 'Instagram needs you to confirm something on the main tab.';
+      return firstBlockedAt
+        ? `Instagram has needed you to confirm something on the main tab since ${firstBlockedAt}.`
+        : 'Instagram needs you to confirm something on the main tab.';
     case 'challenge':
-      return 'Instagram wants a human check on the main tab.';
+      return firstBlockedAt
+        ? `Instagram has wanted a human check on the main tab since ${firstBlockedAt}.`
+        : 'Instagram wants a human check on the main tab.';
     case 'rate_limited':
-      return 'Instagram is rate limiting you. Try again later.';
+      return firstBlockedAt
+        ? `Instagram has been rate limiting you since ${firstBlockedAt}. Try again later.`
+        : 'Instagram is rate limiting you. Try again later.';
     case 'html_response':
-      return 'Instagram did not answer properly. Reload the main tab.';
+      return firstBlockedAt
+        ? `Instagram hasn't answered properly since ${firstBlockedAt}. Reload the main tab.`
+        : 'Instagram did not answer properly. Reload the main tab.';
     default:
       break;
   }
@@ -261,7 +275,9 @@ function describeError(err) {
     case 'logged_out':
       return 'You are signed out of Instagram. Sign in on the main tab.';
     case 'blocked':
-      return 'Instagram is rate limiting you. Try again later.';
+      return firstBlockedAt
+        ? `Instagram has been rate limiting you since ${firstBlockedAt}. Try again later.`
+        : 'Instagram is rate limiting you. Try again later.';
     case 'content_not_ready':
       return 'Cannot reach the Instagram tab. Reload it.';
     default:
@@ -289,13 +305,6 @@ async function noteRateLimitOrigin(haltDetail) {
   const { firstBlockedAt, epoch } = noteRateLimitBlock(await store.loadRateLimitEpoch());
   await store.saveRateLimitEpoch(epoch);
   return rateLimitTimeFormat.format(firstBlockedAt);
-}
-
-/** " First rate limited at 3:42 PM." — appended once there is somewhere to
- * point back to; empty otherwise, so a message reads the same as it always
- * has when there is nothing to add. */
-function rateLimitOriginNote(firstBlockedAt) {
-  return firstBlockedAt ? ` First rate limited at ${firstBlockedAt}.` : '';
 }
 
 /**
@@ -1250,7 +1259,7 @@ async function runHydrationBatch(targets = state.visible.filter((row) => !row.en
         const halt = haltDetail || { message: halted };
         const firstBlockedAt = await noteRateLimitOrigin(halt);
         showBanner(
-          `Enrichment stopped. ${describeError(halt)}${rateLimitOriginNote(firstBlockedAt)}`,
+          `Enrichment stopped. ${describeError(halt, firstBlockedAt)}`,
           { detail: halt }
         );
       } else if (stopped) setStatus('Enrichment stopped.');
@@ -1473,7 +1482,7 @@ async function reportOutcome(job, { halted, haltDetail, stopped, failures = [] }
     const halt = haltDetail || { message: halted };
     const firstBlockedAt = await noteRateLimitOrigin(halt);
     showBanner(
-      `Paused after ${done} of ${job.total}. ${describeError(halt)}${rateLimitOriginNote(firstBlockedAt)}`,
+      `Paused after ${done} of ${job.total}. ${describeError(halt, firstBlockedAt)}`,
       { paused: true, detail: halt }
     );
   } else if (job.run) {
