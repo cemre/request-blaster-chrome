@@ -16,7 +16,6 @@ export const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export const DEFAULT_SETTINGS = {
   sort: 'default',
-  batchSize: 100,
 };
 
 /** Hydrated profiles, keyed by user id, with expired entries dropped. */

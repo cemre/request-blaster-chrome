@@ -103,6 +103,13 @@ export class ThrottledQueue {
           url: result.url,
           body: result.body,
           bodyLength: result.bodyLength,
+          // Kept apart from `blocked`: a caller that wants to tell "wait it
+          // out" apart from "nothing will change until someone signs back
+          // in" needs this, and reason alone is not that signal — a block
+          // carries several reasons of its own (rate_limited, session_
+          // rejected, a checkpoint's interstitial, html_response), and only
+          // signing out ever sets this one.
+          loggedOut: Boolean(result.loggedOut),
         };
         this.onProgress({ done: this.done, total: this.total, item, result });
         break;

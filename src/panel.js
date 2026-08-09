@@ -23,6 +23,7 @@ import {
   mergeRows,
   rangeIds,
   sortRows,
+  splitByMutuals,
   toCachedProfile,
   usesEnrichedFilters,
 } from './model.js';
@@ -157,6 +158,7 @@ const jobs = new JobList({
     // cancelled rather than resumed.
     if (!jobs.paused && !$('banner-resume').hidden) hideBanner();
     updateBulkBar();
+    syncAutoTriage();
   },
 });
 
@@ -486,16 +488,17 @@ function syncHydration() {
 
   // Hydration only ever touches what is in view, so the link has to count the
   // same set — otherwise the enriched-only filters can leave it offering work
-  // that runHydrationBatch would then decline to do.
+  // that runHydrationBatch would then decline to do. No cap on top of that:
+  // Instagram itself caps the pending list at 180-200, so "everything missing"
+  // is never more than one run's worth.
   const missingInView = state.visible.filter((row) => !row.enriched).length;
-  const next = Math.min(missingInView, state.settings.batchSize);
   const link = $('load-batch');
 
   // Gone rather than disabled when there is nothing left to fetch: the counter
   // beside it already says so, and a greyed-out "All loaded" is not a control,
   // it is a second counter.
   link.hidden = missingInView === 0;
-  link.textContent = `Load ${next}`;
+  link.textContent = `Load ${missingInView}`;
   link.disabled = state.loading;
 
   // Nothing loaded yet is the one state where the panel has a single obvious
@@ -528,6 +531,13 @@ function runBars() {
   return jobs.jobs.map((job) => {
     const spec = jobSpec(job);
     const done = jobs.done(job);
+
+    // Auto writes its own label as it moves between phases that do not share
+    // one denominator — enriching, accepting, rejecting, refreshing — so
+    // there is no single "n / total" this generic formula could compute.
+    if (job.statusText !== undefined) {
+      return { id: job.id, state: job.state, label: job.statusText, pct: job.statusPct ?? 0 };
+    }
 
     // A queued job counts nothing yet, so it names the work instead — "Reject 24"
     // rather than "Rejecting 0 / 24…", which reads as a run that has stalled at
@@ -576,9 +586,15 @@ function syncRunStack() {
  * Everything else reads as queued, including the rows of the job that is
  * running: within that job they *are* still queued, and a bare "Reject" chip on
  * a row reads like a button rather than a plan.
+ *
+ * Auto opts out entirely: the whole list already reads as busy — see
+ * .is-auto-running — so naming the job on every row still held would just be
+ * "Queued · Auto" two hundred times over, on rows that are also about to
+ * carry their own "Loading…"/"Accepting…"/"Rejecting…" while their turn is
+ * actually happening.
  */
 function claimLabel(job, id) {
-  if (id === state.inFlightId) return null;
+  if (id === state.inFlightId || job.kind === 'autoTriage') return null;
   return `${job.state === 'paused' ? 'Paused' : 'Queued'} · ${jobSpec(job).label}`;
 }
 
@@ -1059,7 +1075,6 @@ async function loadPending({ useSnapshot = true } = {}) {
     // them. More only become visible once these are cleared. A standing fact
     // about the data, so it gets its own element below the list rather than
     // the status line, where the next action result would overwrite it.
-    $('cap-count').textContent = String(api.SERVER_PAGE_CAP);
     $('cap-note').hidden = !state.capped;
     setState('ready');
     // Before recompute, not just in the finally: syncHydration reads this flag,
@@ -1077,13 +1092,26 @@ async function loadPending({ useSnapshot = true } = {}) {
 
 // ---------------------------------------------------------------- hydration
 
-async function runHydrationBatch() {
-  if (state.hydrationQueue) return;
+/**
+ * @param targets rows to enrich; defaults to what "Load details" itself
+ *   offers — everything unenriched currently in view. Auto passes its own
+ *   list, since it ignores the filters "in view" is scoped by.
+ * @param onItem  optional (row) => void, fired for the row about to be
+ *   worked on — the first one before the queue starts, then each next one as
+ *   soon as the row before it resolves, so it is showing "loading" through
+ *   the paced wait rather than only once its own fetch begins. Only Auto uses
+ *   this — see runAutoTriage — to keep the view on whoever is up next; a
+ *   manual "Load details" click has no reason to move the scroll position out
+ *   from under someone.
+ * @returns the queue's outcome envelope, so a caller chaining more work
+ *   after this — Auto is the one that does — can see a halt and stop too.
+ */
+async function runHydrationBatch(targets = state.visible.filter((row) => !row.enriched), onItem = () => {}) {
+  if (state.hydrationQueue) return { skipped: true };
 
-  const targets = state.visible.filter((row) => !row.enriched).slice(0, state.settings.batchSize);
   if (targets.length === 0) {
     setStatus('Everything in view is already enriched.');
-    return;
+    return { done: 0, total: 0 };
   }
 
   hideBanner();
@@ -1092,16 +1120,45 @@ async function runHydrationBatch() {
   setStatus('');
   const fresh = {};
   let flushed = 0;
+  let outcome = null;
+
+  // Ahead of the queue rather than at the top of the first handler call: the
+  // pacing gap sits *before* each item's fetch, so marking a row only when
+  // its own handler starts would still leave that whole wait unmarked.
+  onItem(targets[0]);
 
   const queue = new ThrottledQueue({
     items: targets,
     pacing: PACING.hydration,
-    handler: async (row) => {
+    handler: async (row, i) => {
+      // A chip of its own, same as an accept or a reject gets — otherwise
+      // whoever is currently loading is only knowable from where the list
+      // has scrolled to, which is precisely the thing a caller may not do.
+      // Redundant with onItem's own mark on every row but the first, and
+      // cheap enough that the redundancy is not worth branching around.
+      renderer.markRow(row.id, 'busy', 'Loading…');
+
       const result = await api.call('profile', { username: row.username });
-      if (!result?.ok) return result || { ok: false, error: 'no response' };
+
+      // Handed off to whoever is next now, before the paced gap that follows
+      // this item — anticipation is what should fill that wait, not an
+      // afterglow on the row that just finished.
+      if (targets[i + 1]) onItem(targets[i + 1]);
+
+      if (!result?.ok) {
+        // Rebuilt from the same unenriched row that is already on screen —
+        // there is nothing new to show, so this just takes the "Loading…"
+        // chip back off rather than leaving it stuck on a row nothing is
+        // happening to any more.
+        renderer.updateRow(row);
+        return result || { ok: false, error: 'no response' };
+      }
 
       const profile = toCachedProfile(result.data);
-      if (!profile) return { ok: false, error: 'unexpected profile shape' };
+      if (!profile) {
+        renderer.updateRow(row);
+        return { ok: false, error: 'unexpected profile shape' };
+      }
 
       state.cache[row.id] = profile;
       fresh[row.id] = profile;
@@ -1127,12 +1184,17 @@ async function runHydrationBatch() {
         await store.saveProfiles(fresh);
       }
     },
-    onFinish: async ({ halted, haltDetail, stopped, failures }) => {
+    onFinish: async (result) => {
+      // Captured before the awaits below, so it is already set by the time
+      // queue.run()'s own promise settles — run() does not wait on this
+      // handler's body past its first await.
+      outcome = result;
       await store.saveProfiles(fresh);
       state.hydrationQueue = null;
       state.hydrationProgress = null;
       syncHydration();
 
+      const { halted, haltDetail, stopped, failures } = result;
       if (halted) {
         const halt = haltDetail || { message: halted };
         showBanner(`Enrichment stopped. ${describeError(halt)}`, { detail: halt });
@@ -1151,6 +1213,7 @@ async function runHydrationBatch() {
   state.hydrationProgress = { done: 0, total: targets.length };
   syncHydration();
   await queue.run();
+  return outcome;
 }
 
 // ------------------------------------------------------------------ actions
@@ -1393,6 +1456,228 @@ function confirmAction({ title, body, warn }) {
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'go'), { once: true });
     dialog.showModal();
   });
+}
+
+// -------------------------------------------------------------- auto-triage
+
+/**
+ * Keeps the list's blanket dim and the chip's own state matched to whether an
+ * Auto run is actually in the job list — including while it sits paused after
+ * a block, which is still "in the list" and still means the rows are not
+ * yours to touch.
+ */
+function syncAutoTriage() {
+  const active = jobs.jobs.some((job) => job.kind === 'autoTriage');
+  $('list').classList.toggle('is-auto-running', active);
+  $('auto-toggle').disabled = active;
+  // The spotlight is meaningless once nothing is dimmed for it to stand out
+  // against, and left set it would light up whichever row this id belongs to
+  // the next time the list is rebuilt for some unrelated reason.
+  if (!active) renderer.setActiveRow(null);
+}
+
+/**
+ * One guest job — enrich, split by the threshold, accept, reject, refresh,
+ * repeat — so it inherits the pipeline's serialization for free, same as the
+ * harvest: nothing else in the queue writes to Instagram while this runs.
+ *
+ * A block does not pause it for a manual Resume the way it would any other
+ * job, though — see waitOutRateLimit — because the entire point of Auto is
+ * to run unattended.
+ *
+ * Deliberately ignores the filter chips: this is a rule about the whole
+ * pending list, not about whatever was last being browsed with them.
+ */
+function startAutoTriage(minMutuals) {
+  state.selected.clear();
+  renderer.setSelection(state.selected);
+  updateBulkBar();
+
+  const live = state.rows.filter((row) => !state.doneIds.has(row.id));
+  jobs.enqueue({
+    kind: 'autoTriage',
+    scope: 'requests',
+    ids: live.map((row) => row.id),
+    spec: { label: 'Auto', gerund: 'Auto' },
+    run: (job) => runAutoTriage(job, minMutuals),
+  });
+}
+
+/** How long Auto waits out a block before trying again on its own. */
+const RATE_LIMIT_COOLDOWN_MS = 300000;
+
+async function runAutoTriage(job, minMutuals) {
+  let stopped = false;
+  let activeQueue = null;
+  job.stop = () => {
+    stopped = true;
+    activeQueue?.stop();
+  };
+
+  /**
+   * A block does not need someone at the keyboard to clear — Auto exists to
+   * run unattended, so it waits the cooldown out itself instead of pausing
+   * the pipeline for a manual Resume, the way every other job still does.
+   * Ticks the bar once a second so the wait reads as progress rather than a
+   * stall, and checks `stopped` on every tick so Stop still lands within a
+   * second rather than only once the whole cooldown has run out.
+   */
+  const waitOutRateLimit = async (haltDetail) => {
+    const halt = haltDetail || { message: 'rate_limited' };
+    // Instagram's own reading of the block, via describeError, is left for
+    // the (i) rather than said again here — it is the same fact the sentence
+    // above it just stated in Auto's own words.
+    showBanner('Auto is waiting out a rate limit and will retry on its own.', { detail: halt });
+
+    let remaining = RATE_LIMIT_COOLDOWN_MS;
+    while (remaining > 0 && !stopped) {
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      job.statusText = `Rate limited — retrying in ${mins}:${String(secs).padStart(2, '0')}…`;
+      job.statusPct = Math.round(100 * (1 - remaining / RATE_LIMIT_COOLDOWN_MS));
+      syncRunStack();
+      await sleep(1000);
+      remaining -= 1000;
+    }
+
+    if (!stopped) hideBanner();
+  };
+
+  // Accept or reject one bucket through Auto's own queue — actOnce is the
+  // same single-row function a manual bulk action runs, so pacing and
+  // failure handling match exactly.
+  const runPhase = (rows, action) => new Promise((resolve) => {
+    const ids = rows.map((row) => row.id);
+    // actOnce marks a row busy itself once its own write starts, but that is
+    // too late to fill the paced wait beforehand — see the matching comment
+    // in runHydrationBatch. Pre-marked here instead, and actOnce's own mark
+    // a moment later just repeats it.
+    const activate = (id) => {
+      renderer.revealRow(id);
+      renderer.setActiveRow(id);
+      renderer.markRow(id, 'busy', ACTIONS[action].busy);
+    };
+    if (ids[0]) activate(ids[0]);
+
+    const queue = new ThrottledQueue({
+      items: ids,
+      pacing: PACING.moderate,
+      handler: async (id, i) => {
+        const result = await actOnce(id, action);
+        if (!result?.blocked && !result?.loggedOut) jobs.handled(job, id);
+        if (ids[i + 1]) activate(ids[i + 1]);
+        return result;
+      },
+      onProgress: ({ done, total }) => {
+        job.statusText = `${ACTIONS[action].gerund} ${done} / ${total}…`;
+        job.statusPct = pct(done, total);
+        syncRunStack();
+        syncClaims();
+      },
+      onFinish: (outcome) => resolve(outcome),
+    });
+    activeQueue = queue;
+    queue.run();
+  });
+
+  let acceptedTotal = 0;
+  let rejectedTotal = 0;
+  // Sorted the same way the list itself is, so a run works down the screen in
+  // the order it is shown rather than in the pending list's own arrival order
+  // — which is what made the view jump to an arbitrary row on every tick, and
+  // what a sequential sweep now lets revealRow's nearest-edge scroll mostly
+  // leave the previous row on screen instead of recentring past it.
+  const live = () => sortRows(
+    state.rows.filter((row) => !state.doneIds.has(row.id)),
+    state.settings.sort
+  );
+
+  while (!stopped) {
+    job.statusText = 'Loading details…';
+    job.statusPct = 0;
+    syncRunStack();
+
+    // The real count keeps ticking in the header's own hydration meter — this
+    // bar just says why the run is quiet right now.
+    const missing = live().filter((row) => !row.enriched);
+    if (missing.length > 0) {
+      const hydration = runHydrationBatch(missing, (row) => {
+        renderer.revealRow(row.id);
+        renderer.setActiveRow(row.id);
+        // Shown as soon as a row is next up, not only once its own fetch
+        // starts — the paced wait before that is what used to read as the
+        // list going quiet between rows.
+        renderer.markRow(row.id, 'busy', 'Loading…');
+      });
+      activeQueue = state.hydrationQueue;
+      const outcome = await hydration;
+      activeQueue = null;
+      if (outcome?.halted) {
+        // Waiting only helps a block — a signed-out session needs someone at
+        // the keyboard regardless of how long this waits, so that one still
+        // gets the standard pause and manual Resume every other job uses.
+        if (outcome.haltDetail?.loggedOut) return outcome;
+        await waitOutRateLimit(outcome.haltDetail);
+        if (stopped) break;
+        continue;
+      }
+      if (stopped) break;
+    }
+
+    const { accept, reject, unknown } = splitByMutuals(live(), minMutuals);
+    // Released rather than left claimed: nothing further happens to these
+    // this run, so they are not "spoken for" any more than any other row.
+    for (const row of unknown) jobs.handled(job, row.id);
+    syncClaims();
+
+    if (accept.length === 0 && reject.length === 0) {
+      setStatus(
+        `Done — ${acceptedTotal} accepted, ${rejectedTotal} rejected, `
+        + `${unknown.length} left with unknown mutuals.`
+      );
+      return {};
+    }
+
+    if (accept.length > 0) {
+      const outcome = await runPhase(accept, 'approve');
+      acceptedTotal += outcome.done - outcome.failures.length;
+      activeQueue = null;
+      if (outcome.halted) {
+        // Waiting only helps a block — a signed-out session needs someone at
+        // the keyboard regardless of how long this waits, so that one still
+        // gets the standard pause and manual Resume every other job uses.
+        if (outcome.haltDetail?.loggedOut) return outcome;
+        await waitOutRateLimit(outcome.haltDetail);
+        if (stopped) break;
+        continue;
+      }
+      if (stopped) break;
+    }
+
+    if (reject.length > 0) {
+      const outcome = await runPhase(reject, 'ignore');
+      rejectedTotal += outcome.done - outcome.failures.length;
+      activeQueue = null;
+      if (outcome.halted) {
+        // Waiting only helps a block — a signed-out session needs someone at
+        // the keyboard regardless of how long this waits, so that one still
+        // gets the standard pause and manual Resume every other job uses.
+        if (outcome.haltDetail?.loggedOut) return outcome;
+        await waitOutRateLimit(outcome.haltDetail);
+        if (stopped) break;
+        continue;
+      }
+      if (stopped) break;
+    }
+
+    job.statusText = 'Refreshing…';
+    job.statusPct = 0;
+    syncRunStack();
+    await loadPending({ useSnapshot: false });
+  }
+
+  setStatus(`Stopped. ${acceptedTotal} accepted, ${rejectedTotal} rejected so far.`);
+  return { stopped: true };
 }
 
 // ------------------------------------------------------------------ binding
@@ -1742,6 +2027,44 @@ function bind() {
     if (event.key !== 'Escape' || $('spam-panel').hidden) return;
     setSpamOpen(false);
     $('spam-toggle').focus();
+  });
+
+  const setAutoOpen = (open) => {
+    $('auto-panel').hidden = !open;
+    $('auto-toggle').setAttribute('aria-expanded', String(open));
+    if (open) clampPopover($('auto-panel'));
+  };
+
+  $('auto-toggle').addEventListener('click', (event) => {
+    event.stopPropagation();
+    setAutoOpen($('auto-panel').hidden);
+  });
+
+  window.addEventListener('resize', () => {
+    if (!$('auto-panel').hidden) clampPopover($('auto-panel'));
+  });
+
+  $('auto-panel').addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', () => setAutoOpen(false));
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || $('auto-panel').hidden) return;
+    setAutoOpen(false);
+    $('auto-toggle').focus();
+  });
+
+  $('auto-run').addEventListener('click', async () => {
+    const minMutuals = Math.max(0, Math.floor(Number($('auto-mutuals').value) || 0));
+    setAutoOpen(false);
+
+    const confirmed = await confirmAction({
+      title: `Accept ${minMutuals}+ mutuals, reject the rest?`,
+      body: 'Repeats automatically, refreshing for more, until nothing’s left to decide.',
+      warn: true,
+    });
+    if (!confirmed) return;
+
+    startAutoTriage(minMutuals);
   });
 
   // Screenshot mode. Matched on event.code because Option+S on macOS types

@@ -31,7 +31,7 @@
       <!-- A link, not a button: this slot reports on the list and offers one
            optional action, which does not warrant a control surface in the
            panel's title band. -->
-      <button id="load-batch" class="link-inline" title="Fetch follower counts, posts, bio and exact mutuals for the next batch of rows in view">Load details</button>
+      <button id="load-batch" class="link-inline" title="Fetch follower counts, posts, bio and exact mutuals for every row in view that is missing them">Load details</button>
     </div>
 
     <!-- --run-pct drives a rule along the bottom edge rather than a fill behind
@@ -172,6 +172,23 @@
   <!-- A button, not a checkbox: it performs an action rather than holding a
        state, and its own label already says which way it will go. -->
   <button id="select-all" type="button" class="chip-button">Select all</button>
+
+  <!-- Its own rule rather than a filter: it acts on the whole pending list
+       regardless of what Following/Mutuals/Spam happen to be set to, so its
+       result cannot depend on what you were last browsing with. -->
+  <div class="popover-host">
+    <button id="auto-toggle" type="button" class="chip-button" aria-expanded="false" aria-controls="auto-panel">Auto</button>
+
+    <div id="auto-panel" class="popover auto-popover" hidden>
+      <div class="auto-rule">
+        <span>Accept &ge;</span>
+        <input id="auto-mutuals" type="number" min="0" step="1" value="10" class="num">
+        <span>mutuals, reject the rest</span>
+      </div>
+      <button id="auto-run" type="button" class="btn btn-primary">Run</button>
+    </div>
+  </div>
+
   <span id="shown-count" class="muted"></span>
 
   <!-- Names the control, not its value. The open menu marks the current option
@@ -240,7 +257,7 @@
        overwrite them — and below rather than above because both describe a
        shortfall in what you just scrolled through. -->
   <p id="cap-note" class="list-note" hidden>
-    Instagram only exposes <span id="cap-count"></span> at a time — clear these, then use
+    Instagram only loads 180-200 at a time — clear these, then use
     Refresh below for the next batch.
   </p>
 

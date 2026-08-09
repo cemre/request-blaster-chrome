@@ -244,6 +244,26 @@ export function countHiddenByUnknownMutuals(rows, filters) {
     .filter((row) => row.mutuals === null).length;
 }
 
+/**
+ * Auto-triage's rule, applied once: accept at or above the threshold, reject
+ * strictly below it, and leave alone whatever mutuals could not be pinned
+ * down. Rejecting on a guess is the one mistake here that cannot be undone,
+ * so a row this cannot place goes to neither pile.
+ */
+export function splitByMutuals(rows, minMutuals) {
+  const accept = [];
+  const reject = [];
+  const unknown = [];
+
+  for (const row of rows) {
+    if (typeof row.mutuals !== 'number') unknown.push(row);
+    else if (row.mutuals >= minMutuals) accept.push(row);
+    else reject.push(row);
+  }
+
+  return { accept, reject, unknown };
+}
+
 // An unknown count sits between a confirmed zero and a confirmed one: someone
 // who might share mutuals is a better thing to look at than someone proven not
 // to. Sorting null as 0 buried the majority of the queue behind the rows

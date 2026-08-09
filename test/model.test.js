@@ -17,6 +17,7 @@ import {
   parseMutualCount,
   rangeIds,
   sortRows,
+  splitByMutuals,
   toCachedProfile,
   usesEnrichedFilters,
 } from '../src/model.js';
@@ -199,6 +200,24 @@ test('countHiddenByUnknownMutuals reports only what the threshold actually hid',
     countHiddenByUnknownMutuals(rows, { ...DEFAULT_FILTERS, minMutuals: 1, search: 'alsounknown' }),
     1
   );
+});
+
+test('splitByMutuals accepts at the threshold, rejects below it, leaves unknown alone', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'atFloor', social_context: 'Followed by x + 4 more' }, // 5
+      { pk: '2', username: 'overFloor', social_context: 'Followed by x + 9 more' }, // 10
+      { pk: '3', username: 'underFloor', social_context: 'Followed by x' }, // 1
+      { pk: '4', username: 'noHint' }, // null
+    ],
+    {},
+    {}
+  );
+
+  const { accept, reject, unknown } = splitByMutuals(rows, 5);
+  assert.deepEqual(accept.map((r) => r.username).sort(), ['atFloor', 'overFloor']);
+  assert.deepEqual(reject.map((r) => r.username), ['underFloor']);
+  assert.deepEqual(unknown.map((r) => r.username), ['noHint']);
 });
 
 test('formatMutuals keeps unknown, estimated and exact visibly apart', () => {

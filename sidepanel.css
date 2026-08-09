@@ -551,7 +551,8 @@ h1 {
 
 .popover-check input[type='checkbox'] { accent-color: var(--primary); }
 
-.popover-check .num {
+.popover-check .num,
+.auto-rule .num {
   width: 64px;
   font: inherit;
   padding: 2px 5px;
@@ -559,6 +560,37 @@ h1 {
   border-radius: 4px;
   background: var(--bg);
   color: var(--text);
+}
+
+/* Same shape as .popover-check, minus the pointer cursor that reads as a
+   click target — nothing here toggles, it is one sentence with a number in
+   the middle of it. Wraps rather than forcing the popover wide: .popover
+   sizes to its content, so an unwrapped row would drag "reject the rest"
+   past a narrow panel's edge instead of dropping to a second line. */
+.auto-rule {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px 0 5px;
+  font-size: 12px;
+}
+
+.popover .btn { margin-top: 8px; width: 100%; }
+
+/* The popover's one committing action, so it carries the accent the rest of
+   this palette spends on focus rings and the checked chip fill — everywhere
+   else in here is the neutral .btn grey on purpose. */
+.btn-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-text);
+  font-weight: 500;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 
 .popover-divider {
@@ -849,6 +881,22 @@ body.has-toolbar .list-scroll { padding-bottom: calc(var(--toolbar-h, 92px) + 12
 }
 
 .row.is-claimed.is-busy { opacity: 1; }
+
+/* The one deliberate return to the wholesale dim the comment above replaced.
+   Auto spans several refreshes, so most of what it eventually touches is not
+   on screen yet — a per-row claim can only cover the rows it started with. The
+   whole list reads as "busy" for the run's own duration instead. */
+.list.is-auto-running .row { opacity: 0.4; pointer-events: none; cursor: default; }
+
+/* The spotlighted row stays at full opacity against its dimmed neighbours —
+   same idea as .is-claimed.is-busy above, restated at higher specificity so
+   the blanket dim just above does not flatten it back out. Keyed on is-active
+   rather than is-busy: is-busy clears the moment a fetch or write resolves,
+   which is well before Auto's own paced gap to the next row ends, and
+   dropping the highlight for that whole gap read as the list going jumpy —
+   is-active is held by setActiveRow across the gap too, until the next row
+   actually starts. */
+.list.is-auto-running .row.is-active { opacity: 1; }
 
 /* Opening a profile survives the claim. It is a read, it changes nothing, and
    it is the one thing worth doing mid-run — seeing who you are about to reject.

@@ -43,6 +43,10 @@ export class ListRenderer {
     this.rendered = 0;
     this.nodesById = new Map();
     this.claims = new Map();
+    // The one row Auto is currently spotlighting — see setActiveRow. Held
+    // here rather than as a class only, so a row rebuilt mid-spotlight (its
+    // own data arriving) comes back out of buildRow still carrying it.
+    this.activeId = null;
     // Where a shift-click measures from. Tracked here rather than read back off
     // the document because the shift-click suppresses focus, and cleared by
     // setRows below — an anchor in a list that has been replaced points at a
@@ -238,6 +242,46 @@ export class ListRenderer {
     this.rendered += next.length;
   }
 
+  /**
+   * Bring one row on screen, rendering further into the window first if the
+   * scroller has not reached it yet — Auto works through rows in an order
+   * that has nothing to do with how far anyone has scrolled, so the row it is
+   * on right now is often still past the window's edge.
+   *
+   * A no-op for a row the current filters have hidden entirely: there is
+   * nothing on screen to scroll to, and forcing the window past it would just
+   * render rows nobody asked to see.
+   *
+   * Centred rather than nearest: the caller now works down the list in order,
+   * so a neighbour is normally on screen already at 'nearest' — but centring
+   * is what keeps that neighbour's own "?" reachable near the same spot on
+   * every call instead of drifting toward an edge as the run goes on.
+   */
+  revealRow(id) {
+    if (!this.nodesById.has(id)) {
+      const index = this.rows.findIndex((row) => row.id === id);
+      if (index === -1) return;
+      while (this.rendered <= index && this.rendered < this.rows.length) this.extend();
+    }
+    this.nodesById.get(id)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  /**
+   * Move the spotlight to `id` (or turn it off, for null) and hold it there
+   * across whatever this row goes through next — a fetch, a write, the paced
+   * gap after either — until the caller moves it again. `markRow`/`updateRow`
+   * rebuild the node in between and would otherwise drop a class set on it
+   * directly; `buildRow` reads activeId itself so the rebuilt node comes back
+   * carrying it, and this method only has to touch the *previous* node, which
+   * nothing else is about to rebuild for it.
+   */
+  setActiveRow(id) {
+    if (this.activeId === id) return;
+    this.nodesById.get(this.activeId)?.classList.remove('is-active');
+    this.activeId = id;
+    this.nodesById.get(id)?.classList.add('is-active');
+  }
+
   /** Swap one row in place, e.g. when hydration fills in its details. */
   updateRow(row) {
     const existing = this.nodesById.get(row.id);
@@ -269,6 +313,7 @@ export class ListRenderer {
     const node = el('div', 'row');
     node.dataset.id = row.id;
     if (this.selected.has(row.id)) node.classList.add('is-selected');
+    if (row.id === this.activeId) node.classList.add('is-active');
 
     // Masked once, here, so nothing below can render one of them raw. The
     // titles and aria-labels go through it too: a tooltip is as visible in a

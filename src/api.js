@@ -174,7 +174,13 @@ function raise(result) {
 // exactly once. The pagination is kept because it costs nothing and Instagram
 // has shipped it before, but the guards below stop a resurrected-but-broken
 // cursor from spinning forever.
-export const SERVER_PAGE_CAP = 200;
+//
+// 2026-08-08: a full page has also been observed as low as 185, so the cap
+// is a range rather than one fixed number. `capped` is judged against the
+// low end — false negatives just mean the note stays hidden a little longer,
+// which is safer than telling someone their queue is full when it isn't.
+export const SERVER_PAGE_CAP_MIN = 180;
+export const SERVER_PAGE_CAP_MAX = 200;
 const MAX_PAGES = 10;
 
 /**
@@ -211,7 +217,7 @@ export async function fetchAllPending(onPage) {
     }
   } while (maxId);
 
-  return { users, capped: users.length >= SERVER_PAGE_CAP };
+  return { users, capped: users.length >= SERVER_PAGE_CAP_MIN };
 }
 
 /** Follow status for every id, 100 per request. */
