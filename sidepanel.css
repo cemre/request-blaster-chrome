@@ -551,7 +551,8 @@ h1 {
   cursor: pointer;
 }
 
-.popover-check input[type='checkbox'] { accent-color: var(--primary); }
+.popover-check input[type='checkbox'],
+.popover-check input[type='radio'] { accent-color: var(--primary); }
 
 .popover-check .num,
 .auto-rule .num {
@@ -578,7 +579,10 @@ h1 {
   font-size: 12px;
 }
 
-.auto-priority {
+/* A comma-separated handle list, typed as free text — used by both Auto's
+   priority list and the mutuals popover's "mutual with" filter, which is
+   why this isn't named after either one. */
+.handle-list-input {
   width: 100%;
   font: inherit;
   font-size: 12px;
@@ -590,12 +594,34 @@ h1 {
   box-sizing: border-box;
 }
 
-.auto-hint {
+/* Same reasoning as .handle-list-input: a caveat line under a popover
+   control, reused wherever the ~3-mutual-names limitation applies. */
+.filter-hint {
   margin: 4px 0 0;
   font-size: 10px;
   line-height: 1.4;
   color: var(--text-tertiary);
 }
+
+.mutuals-custom-row {
+  gap: 6px;
+}
+
+.mutuals-custom-row select {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Nine radios plus the custom row would otherwise pull .popover's own
+   width: max-content out to whatever its widest line is — a fixed width
+   wraps the hint text instead and keeps the list itself the panel's
+   narrowest, most scannable shape. */
+#mutuals-panel { width: 200px; }
 
 .popover .btn { margin-top: 8px; width: 100%; }
 
@@ -1433,23 +1459,6 @@ body.is-anon .avatar {
      back on the running state — the difference between a spinner, a counter and
      a Stop sharing a line with two tabs at 260px and not. */
   .label-wide { display: none; }
-
-  /* Except at the default, where the value is "any" and names nothing at all.
-     There the chip goes back to naming the control and hides the select behind
-     it — the same overlay .select-chip-menu uses, so the popup stays native.
-     option:checked tracks the live selection, so this flips as it is used. */
-  .mutuals-chip:has(option[value='any']:checked) { position: relative; }
-
-  .mutuals-chip:has(option[value='any']:checked) .label-wide,
-  .mutuals-chip:has(option[value='any']:checked) .chevron-standin { display: block; }
-
-  .mutuals-chip:has(option[value='any']:checked) select {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-  }
 
   /* 6px of grid gap buys back 4px of the row's text column, twice over. */
   .row { gap: 6px; }

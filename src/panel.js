@@ -23,6 +23,7 @@ import {
   formatDuration,
   formatShownCount,
   mergeRows,
+  mutualsBoundFromComparator,
   nextRateLimitWait,
   noteRateLimitBlock,
   parsePriorityHandles,
@@ -415,6 +416,7 @@ function recompute() {
 
   updateEmptyState(live);
   syncHydration();
+  updateMutualsChip();
   updateSpamChip();
   updateBulkBar();
 }
@@ -457,11 +459,15 @@ function updateEmptyState(live) {
  */
 function resetFilters() {
   $('f-following').checked = false;
-  $('f-mutuals').value = 'any';
+  $('mutuals-any').checked = true;
+  $('mutuals-comparator').value = '>=';
+  $('mutuals-custom-n').value = '';
   $('f-max-followers').value = '';
   for (const id of ['f-zero-posts', 'f-empty-bio', 'f-default-pic', 'f-bot-ratio']) {
     $(id).checked = false;
   }
+  $('f-mutual-handles-on').checked = false;
+  $('f-mutual-handles').value = '';
 
   // Emptied before it is closed, so setSearchOpen has nothing left to clear and
   // fires no second recompute of its own.
@@ -469,6 +475,24 @@ function resetFilters() {
   setSearchOpen(false, { field: $('search'), button: $('search-toggle'), onClear: () => {} });
 
   readFilters();
+}
+
+/**
+ * Keeps the count on the closed Mutuals chip honest — up to two things can
+ * be active behind it: the range (preset or custom) and the handle match,
+ * which is why this counts dimensions rather than individual filter keys
+ * the way updateSpamChip does.
+ */
+function updateMutualsChip() {
+  const rangeActive = state.filters.minMutuals > 0
+    || (state.filters.maxMutuals !== null && state.filters.maxMutuals !== undefined)
+    || state.filters.noMutuals;
+  const handlesActive = state.filters.mutualHandles.length > 0;
+  const active = (rangeActive ? 1 : 0) + (handlesActive ? 1 : 0);
+
+  $('mutuals-count').textContent = String(active);
+  $('mutuals-count').hidden = active === 0;
+  $('mutuals-toggle').classList.toggle('is-filtering', active > 0);
 }
 
 /** Keeps the count on the closed Spam chip honest. */
@@ -1765,15 +1789,20 @@ async function runAutoTriage(job, minMutuals, priorityHandles) {
 // ------------------------------------------------------------------ binding
 
 /**
- * The mutuals menu, in the model's terms.
+ * The mutuals popover's radio group, in the model's terms.
  *
- * Its values carry the comparison each option is labelled with, in the two
- * forms the menu uses: "<10" is strict and steps in by one to reach the
+ * A preset's value carries the comparison it is labelled with, in the two
+ * forms the popover uses: "<10" is strict and steps in by one to reach the
  * inclusive bounds applyFilters works in, while "10+" already is one. "0" is
  * not a bound at all but its own predicate, and an enriched-only one: an
- * absent social_context is not evidence of zero.
+ * absent social_context is not evidence of zero. "custom" defers entirely to
+ * mutualsBoundFromComparator, which already speaks applyFilters's terms.
  */
-function readMutualsFilter(value) {
+function readMutualsFilter(value, comparator, customN) {
+  if (value === 'custom') {
+    return { ...mutualsBoundFromComparator(comparator, customN), noMutuals: false };
+  }
+
   const under = /^<(\d+)$/.exec(value);
   const atLeast = /^(\d+)\+$/.exec(value);
 
@@ -1785,16 +1814,22 @@ function readMutualsFilter(value) {
   return { minMutuals, maxMutuals, noMutuals: value === '0' };
 }
 
+function checkedRadioValue(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value ?? 'any';
+}
+
 function readFilters() {
   const rawMax = $('f-max-followers').value;
+  const customN = Math.max(0, Math.floor(Number($('mutuals-custom-n').value) || 0));
   state.filters = {
     onlyFollowing: $('f-following').checked,
-    ...readMutualsFilter($('f-mutuals').value),
+    ...readMutualsFilter(checkedRadioValue('mutuals-preset'), $('mutuals-comparator').value, customN),
     maxFollowers: rawMax === '' ? null : Number(rawMax),
     zeroPosts: $('f-zero-posts').checked,
     emptyBio: $('f-empty-bio').checked,
     defaultPic: $('f-default-pic').checked,
     botRatio: $('f-bot-ratio').checked,
+    mutualHandles: $('f-mutual-handles-on').checked ? parsePriorityHandles($('f-mutual-handles').value) : [],
     search: $('search').value,
   };
   recompute();
@@ -2061,10 +2096,14 @@ function bind() {
   });
 
   const filterInputs = [
-    'f-following', 'f-mutuals', 'f-max-followers',
+    'f-following', 'f-max-followers',
     'f-zero-posts', 'f-empty-bio', 'f-default-pic', 'f-bot-ratio',
+    'mutuals-comparator', 'mutuals-custom-n', 'f-mutual-handles-on', 'f-mutual-handles',
   ];
   for (const id of filterInputs) $(id).addEventListener('change', readFilters);
+  for (const radio of document.querySelectorAll('input[name="mutuals-preset"]')) {
+    radio.addEventListener('change', readFilters);
+  }
 
   let searchTimer;
   $('search').addEventListener('input', () => {
@@ -2082,6 +2121,30 @@ function bind() {
 
   $('search').addEventListener('keydown', (event) => {
     if (event.key === 'Escape') searchToggle();
+  });
+
+  const setMutualsOpen = (open) => {
+    $('mutuals-panel').hidden = !open;
+    $('mutuals-toggle').setAttribute('aria-expanded', String(open));
+    if (open) clampPopover($('mutuals-panel'));
+  };
+
+  $('mutuals-toggle').addEventListener('click', (event) => {
+    event.stopPropagation();
+    setMutualsOpen($('mutuals-panel').hidden);
+  });
+
+  window.addEventListener('resize', () => {
+    if (!$('mutuals-panel').hidden) clampPopover($('mutuals-panel'));
+  });
+
+  $('mutuals-panel').addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', () => setMutualsOpen(false));
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || $('mutuals-panel').hidden) return;
+    setMutualsOpen(false);
+    $('mutuals-toggle').focus();
   });
 
   const setSpamOpen = (open) => {

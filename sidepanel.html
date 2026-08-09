@@ -97,40 +97,62 @@
       <span>Following</span>
     </label>
 
-    <label class="select-chip mutuals-chip">
-      <!-- Drops away narrow, leaving the value to speak for itself — hence the
-           aria-label below, which is the select's only name once this is gone.
-           It comes back at the default, where the value is "any" and says
-           nothing; the chevron stands in for the select's own, hidden there. -->
-      <span class="label-wide">Mutuals</span>
-      <svg class="chip-chevron chevron-standin" viewBox="0 0 10 6" width="9" height="6" aria-hidden="true" focusable="false">
-        <path d="M1 1.25 5 5l4-3.75" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-      </svg>
-      <!-- A select is as wide as its longest option whether or not that option
-           is chosen, so spelling the caveat into "0" — once "none (loaded
-           rows)" — cost this chip ~60px on every panel at every width. The
-           caveat is not lost: the same text is in the tooltip, and
-           #enriched-warning states it in full whenever the option is on.
+    <div class="popover-host">
+      <button id="mutuals-toggle" type="button" class="chip-button" aria-expanded="false" aria-controls="mutuals-panel">
+        <span>Mutuals</span><span id="mutuals-count" class="chip-count" hidden></span>
+      </button>
 
-           The comparison lives in the value ("<5", "10+") so the option and
-           what it does cannot drift apart: readFilters reads the form off the
-           value rather than keeping a second table of its own. Ceilings are
-           strict and floors are inclusive, exactly as written, which also
-           makes the two halves meet: "<5" and "5+" divide the rows in two
-           with no count falling between them, where "<5" against "> 5" used
-           to drop anyone with exactly five. -->
-      <select id="f-mutuals" aria-label="Mutuals" title="&quot;0&quot; needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals. The ranges also skip rows whose count is still unknown.">
-        <option value="any">any</option>
-        <option value="0">0</option>
-        <option value="&lt;5">&lt; 5</option>
-        <option value="&lt;10">&lt; 10</option>
-        <option value="1+">1+</option>
-        <option value="5+">5+</option>
-        <option value="10+">10+</option>
-        <option value="50+">50+</option>
-        <option value="100+">100+</option>
-      </select>
-    </label>
+      <!-- The comparison lives in each radio's value ("<5", "10+") so the
+           option and what it does cannot drift apart: readFilters reads the
+           form off the value rather than keeping a second table of its own.
+           Ceilings are strict and floors are inclusive, exactly as written,
+           which also makes the two halves meet: "<5" and "5+" divide the
+           rows in two with no count falling between them. -->
+      <!-- Ordered as a number line, not as written on the menu: a "<N" radio
+           sorts by -N (further left the larger N is, since it excludes more
+           of the top end) and an "N+" radio sorts by N, so the row reads
+           <10, <5, 0, 1+, 5+, 10+, 50+, 100+ — ascending throughout, with
+           0 sitting exactly where a floor of 0 and a ceiling of 0 meet. -->
+      <div id="mutuals-panel" class="popover" hidden>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" id="mutuals-any" value="any" checked><span>any</span></label>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" value="&lt;10"><span>&lt; 10</span></label>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" value="&lt;5"><span>&lt; 5</span></label>
+        <label class="popover-check" title="Needs an exact count, so it only matches rows you have loaded details for — an absent &quot;Followed by…&quot; hint does not mean zero mutuals.">
+          <input type="radio" name="mutuals-preset" value="0"><span>0</span>
+        </label>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" value="1+"><span>1+</span></label>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" value="5+"><span>5+</span></label>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" value="10+"><span>10+</span></label>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" value="50+"><span>50+</span></label>
+        <label class="popover-check"><input type="radio" name="mutuals-preset" value="100+"><span>100+</span></label>
+
+        <!-- Its own radio, not a text field that overrides the presets above
+             it — picking it is what makes the comparator and number below
+             mean anything; readFilters ignores them otherwise. -->
+        <label class="popover-check mutuals-custom-row">
+          <input type="radio" name="mutuals-preset" id="mutuals-custom" value="custom">
+          <select id="mutuals-comparator" aria-label="Comparator">
+            <option value="<">&lt;</option>
+            <option value="<=">&le;</option>
+            <option value="=">=</option>
+            <option value=">">&gt;</option>
+            <option value=">=">&ge;</option>
+          </select>
+          <input id="mutuals-custom-n" type="number" min="0" step="1" placeholder="N" class="num">
+        </label>
+
+        <div class="popover-divider"></div>
+
+        <!-- ANDs with whichever radio above is selected, rather than
+             replacing it — "10+ mutuals with alice" is a narrower question
+             than either half asks alone. -->
+        <label class="popover-check">
+          <input type="checkbox" id="f-mutual-handles-on"><span>mutuals with</span>
+        </label>
+        <input id="f-mutual-handles" type="text" placeholder="comma-separated handles" class="handle-list-input">
+        <p class="filter-hint">Matches only the ~3 mutual names Instagram shows per row, not your full mutual list.</p>
+      </div>
+    </div>
 
     <div class="popover-host">
       <button id="spam-toggle" type="button" class="chip-button" aria-expanded="false" aria-controls="spam-panel">
@@ -192,8 +214,8 @@
       <div class="auto-rule">
         <label for="auto-priority">Also accept if mutual with:</label>
       </div>
-      <input id="auto-priority" type="text" placeholder="comma-separated handles" class="auto-priority">
-      <p class="auto-hint">Matches only the ~3 mutual names Instagram shows per row, not your full mutual list.</p>
+      <input id="auto-priority" type="text" placeholder="comma-separated handles" class="handle-list-input">
+      <p class="filter-hint">Matches only the ~3 mutual names Instagram shows per row, not your full mutual list.</p>
 
       <button id="auto-run" type="button" class="btn btn-primary">Run</button>
     </div>

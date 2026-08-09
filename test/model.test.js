@@ -20,6 +20,7 @@ import {
   isBotRatio,
   isDefaultPic,
   mergeRows,
+  mutualsBoundFromComparator,
   nextRateLimitWait,
   noteRateLimitBlock,
   parseMutualCount,
@@ -454,6 +455,33 @@ test('applyFilters: search covers username and full name, case-insensitively', (
   assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, search: 'SARAH' }).map((r) => r.id), ['1']);
   assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, search: 'Mike' }).map((r) => r.id), ['3']);
   assert.deepEqual(applyFilters(rows, { ...DEFAULT_FILTERS, search: '  ' }).length, 3);
+});
+
+test('mutualsBoundFromComparator maps each comparator to applyFilters\'s own bound pair', () => {
+  assert.deepEqual(mutualsBoundFromComparator('>', 5), { minMutuals: 6, maxMutuals: null });
+  assert.deepEqual(mutualsBoundFromComparator('>=', 5), { minMutuals: 5, maxMutuals: null });
+  assert.deepEqual(mutualsBoundFromComparator('<', 5), { minMutuals: 0, maxMutuals: 4 });
+  assert.deepEqual(mutualsBoundFromComparator('<=', 5), { minMutuals: 0, maxMutuals: 5 });
+  assert.deepEqual(mutualsBoundFromComparator('=', 5), { minMutuals: 5, maxMutuals: 5 });
+});
+
+test('applyFilters: mutualHandles matches a row sharing a mutual with a named handle', () => {
+  const cache = {
+    1: { followers: 1, following: 1, posts: 1, bio: '', mutualCount: 2, mutualNames: ['dave', 'priorityfriend'], fetchedAt: Date.now() },
+    2: { followers: 1, following: 1, posts: 1, bio: '', mutualCount: 2, mutualNames: ['dave', 'eve'], fetchedAt: Date.now() },
+  };
+  const rows = mergeRows(pendingFixture, statusFixture, cache);
+  // User 3 in pendingFixture never gets a cache entry, so it stays un-enriched.
+
+  const filters = { ...DEFAULT_FILTERS, mutualHandles: ['priorityfriend'] };
+  assert.deepEqual(applyFilters(rows, filters).map((r) => r.id), ['1']);
+});
+
+test('mutualHandles is an enriched-only filter, same as noMutuals', () => {
+  assert.equal(usesEnrichedFilters({ ...DEFAULT_FILTERS, mutualHandles: [] }), false);
+  assert.equal(usesEnrichedFilters({ ...DEFAULT_FILTERS, mutualHandles: ['alice'] }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, mutualHandles: ['alice'] }), true);
+  assert.equal(filtersActive({ ...DEFAULT_FILTERS, mutualHandles: [] }), false);
 });
 
 test('applyFilters: spam filters exclude un-enriched rows rather than assuming', () => {

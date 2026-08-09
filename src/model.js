@@ -148,8 +148,25 @@ export const DEFAULT_FILTERS = {
   emptyBio: false,
   defaultPic: false,
   botRatio: false,
+  mutualHandles: [],
   search: '',
 };
+
+/**
+ * The custom-range half of the mutuals popover, in applyFilters's own terms.
+ * `=` is not a third bound type — it is just a floor and a ceiling pinned to
+ * the same number, which applyFilters already knows how to intersect.
+ */
+export function mutualsBoundFromComparator(comparator, n) {
+  switch (comparator) {
+    case '>': return { minMutuals: n + 1, maxMutuals: null };
+    case '>=': return { minMutuals: n, maxMutuals: null };
+    case '<': return { minMutuals: 0, maxMutuals: n - 1 };
+    case '<=': return { minMutuals: 0, maxMutuals: n };
+    case '=': return { minMutuals: n, maxMutuals: n };
+    default: return { minMutuals: 0, maxMutuals: null };
+  }
+}
 
 // Filters that can only be evaluated against a hydrated row. When any of these
 // is active, un-enriched rows are excluded rather than assumed innocent — the
@@ -165,14 +182,22 @@ export const DEFAULT_FILTERS = {
 //
 // `defaultPic` is deliberately absent: has_anonymous_profile_picture ships
 // with the pending list, so that filter works on every row for free.
-const ENRICHED_ONLY_FILTERS = ['maxFollowers', 'zeroPosts', 'emptyBio', 'botRatio', 'noMutuals'];
+//
+// `mutualHandles` is here for the same reason as `noMutuals`: row.mutualNames
+// is only ever populated once a row is enriched (see mergeRows), so matching
+// it against an un-enriched row would just be matching against [].
+const ENRICHED_ONLY_FILTERS = ['maxFollowers', 'zeroPosts', 'emptyBio', 'botRatio', 'noMutuals', 'mutualHandles'];
 
 const hasCeiling = (filters) => filters.maxMutuals !== null && filters.maxMutuals !== undefined;
 
 export function usesEnrichedFilters(filters) {
   return ENRICHED_ONLY_FILTERS.some((key) => {
     const value = filters[key];
-    return key === 'maxFollowers' ? value !== null && value !== '' : Boolean(value);
+    // Both are always-truthy containers regardless of whether anything is
+    // actually in them — Boolean(value) alone would treat [] and '' as active.
+    if (key === 'maxFollowers') return value !== null && value !== '';
+    if (key === 'mutualHandles') return Array.isArray(value) && value.length > 0;
+    return Boolean(value);
   });
 }
 
@@ -228,6 +253,10 @@ export function applyFilters(rows, filters) {
     if (filters.botRatio && !isBotRatio(row)) return false;
     // row.mutuals is the exact count here — the enriched gate above guarantees it.
     if (filters.noMutuals && row.mutuals !== 0) return false;
+    if (
+      filters.mutualHandles?.length > 0
+      && !row.mutualNames?.some((name) => filters.mutualHandles.includes(normalizeHandle(name)))
+    ) return false;
 
     return true;
   });
