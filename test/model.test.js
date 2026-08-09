@@ -14,7 +14,6 @@ import {
   filtersActive,
   formatCount,
   formatCountdown,
-  formatDuration,
   formatMutuals,
   formatShownCount,
   isBotRatio,
@@ -26,6 +25,7 @@ import {
   parseMutualCount,
   parsePriorityHandles,
   rangeIds,
+  retryTimeLabel,
   sortRows,
   splitByMutuals,
   toCachedProfile,
@@ -756,13 +756,41 @@ test('formatCountdown reads as a stopwatch — M:SS under an hour, H:MM:SS past 
   assert.equal(formatCountdown(23 * 3600 * 1000 + 5 * 60 * 1000 + 9000), '23:05:09');
 });
 
-test('formatDuration speaks a wait as a sentence, not a clock', () => {
-  assert.equal(formatDuration(5 * 60 * 1000), '5 minutes');
-  assert.equal(formatDuration(60 * 1000), '1 minute');
-  assert.equal(formatDuration(60 * 60 * 1000), '1 hour');
-  assert.equal(formatDuration(2 * 60 * 60 * 1000), '2 hours');
-  assert.equal(formatDuration(22 * 60 * 60 * 1000 + 45 * 60 * 1000), '22 hours 45 minutes');
-  assert.equal(formatDuration(0), '0 minutes');
+// A stand-in for the panel's Intl instance, so these assert the labelling and
+// not en-US's punctuation.
+const clock = (at) => new Date(at).toTimeString().slice(0, 5);
+
+test('retryTimeLabel names a time within today with the clock alone', () => {
+  const at = new Date(2026, 7, 9, 13, 5).getTime();
+  const now = new Date(2026, 7, 9, 10, 31).getTime();
+  assert.equal(retryTimeLabel(at, clock, now), '13:05');
+});
+
+test('retryTimeLabel says "tomorrow" once a wait crosses midnight — a bare clock time a day out names an hour that already went past', () => {
+  const at = new Date(2026, 7, 10, 9, 20).getTime();
+  const now = new Date(2026, 7, 9, 23, 40).getTime();
+  assert.equal(retryTimeLabel(at, clock, now), 'tomorrow at 09:20');
+});
+
+test('retryTimeLabel goes by the calendar day, not by hours elapsed', () => {
+  // Twenty minutes apart, but on either side of midnight: "00:05" alone would
+  // read as five past midnight this morning, which is already behind us.
+  const at = new Date(2026, 7, 10, 0, 5).getTime();
+  const now = new Date(2026, 7, 9, 23, 45).getTime();
+  assert.equal(retryTimeLabel(at, clock, now), 'tomorrow at 00:05');
+
+  // And nearly a full day apart while still being the same date — the longest
+  // wait the ladder allows, started just after midnight, still lands today.
+  const sameDay = new Date(2026, 7, 9, 23, 55).getTime();
+  assert.equal(retryTimeLabel(sameDay, clock, new Date(2026, 7, 9, 0, 5).getTime()), '23:55');
+});
+
+test('retryTimeLabel spans a month and a year boundary, where the date rolls but the day number drops', () => {
+  const newYear = new Date(2027, 0, 1, 0, 30).getTime();
+  assert.equal(
+    retryTimeLabel(newYear, clock, new Date(2026, 11, 31, 23, 50).getTime()),
+    'tomorrow at 00:30'
+  );
 });
 
 test('noteRateLimitBlock records the episode start without stepping the ladder', () => {

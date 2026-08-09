@@ -20,7 +20,6 @@ import {
   countHiddenByUnknownMutuals,
   filtersActive,
   formatCountdown,
-  formatDuration,
   formatShownCount,
   mergeRows,
   mutualsBoundFromComparator,
@@ -28,6 +27,7 @@ import {
   noteRateLimitBlock,
   parsePriorityHandles,
   rangeIds,
+  retryTimeLabel,
   sortRows,
   splitByMutuals,
   toCachedProfile,
@@ -286,9 +286,11 @@ function describeError(err, firstBlockedAt = null) {
   }
 }
 
-// Same options as render.js's log-row timeFormat, so a time reads the same
-// wherever the panel shows one.
-const rateLimitTimeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+// Deliberately not render.js's log-row timeFormat, which pads to two digits:
+// that column is read as a column, and a padded hour keeps it aligned. These
+// times are read inside sentences, where the pad is what a 24-hour clock looks
+// like — "waiting until 01:00 PM" — so the hour is spoken as it would be said.
+const rateLimitTimeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
 /**
  * The shared rate-limit epoch's origin time, for a halt anywhere outside
@@ -1611,8 +1613,8 @@ async function runAutoTriage(job, minMutuals, priorityHandles) {
    * run unattended, so it waits the block out itself instead of pausing the
    * pipeline for a manual Resume, the way every other job still does. Ticks
    * the bar once a second so the wait reads as progress rather than a stall,
-   * and checks `stopped` on every tick so Stop still lands within a second
-   * rather than only once the whole wait has run out.
+   * and checks `stopped` on every tick so Stop lands on the next one rather
+   * than only once the whole wait has run out.
    *
    * How long to wait — and whether it escalates toward a 24-hour lockout once
    * plain doubling stops helping — is nextRateLimitWait's call, not this
@@ -1627,28 +1629,48 @@ async function runAutoTriage(job, minMutuals, priorityHandles) {
     const { wait, epoch } = nextRateLimitWait(await store.loadRateLimitEpoch());
     await store.saveRateLimitEpoch(epoch);
 
-    // Said once, up front, rather than on every tick below: the countdown
-    // already says how much is left, so repeating the start time next to it
-    // every second would just be noise.
+    // Two clock times, and both stay true for the whole wait, so the sentence
+    // is written once and left alone: the block's own time names the episode,
+    // and the deadline is when this wait ends however long anyone has been
+    // watching it. A length could not do that — "waiting 1 hour" is only true
+    // in the second it is written, and forty minutes later still says an hour,
+    // which is a live sentence reading as a stuck one. What it costs is that
+    // the deadline below has to be real: a time on screen is a promise where a
+    // duration was only a description. The one thing that does move it is a
+    // fresh block, and that arrives here as another call, with another
+    // sentence, one rung further up the ladder.
+    const until = Date.now() + wait;
     const firstBlockedAt = rateLimitTimeFormat.format(epoch.firstBlockedAt);
+    const retryAt = retryTimeLabel(until, (at) => rateLimitTimeFormat.format(at));
     // Instagram's own reading of the block, via describeError, is left for
     // the (i) rather than said again here — it is the same fact the sentence
     // above it just stated in Auto's own words.
     showBanner(
-      `Auto hit a rate limit at ${firstBlockedAt} and is waiting ${formatDuration(wait)} before retrying.`,
+      `Auto hit a rate limit at ${firstBlockedAt} and is waiting until ${retryAt} to retry.`,
       { detail: halt }
     );
 
+    // Measured against that deadline rather than counted down a tick at a
+    // time, which is what makes the time above a promise this can keep.
+    // sleep(1000) is a floor, not a guarantee: Chrome throttles timers in a
+    // hidden page — which a side panel is the moment its window goes to the
+    // background — and a decremented counter pays each throttled tick a full
+    // second it never earned, stretching the wait far past the time just put
+    // on screen while the bar appears to have stopped. Read off the clock, a
+    // slow tick costs precision instead of time.
     let remaining = wait;
     while (remaining > 0 && !stopped) {
       job.statusText = `Rate limited — retrying in ${formatCountdown(remaining)}…`;
       job.statusPct = Math.round(100 * (1 - remaining / wait));
       syncRunStack();
       await sleep(1000);
-      remaining -= 1000;
+      remaining = until - Date.now();
     }
 
-    if (!stopped) hideBanner();
+    // Gone however the wait ended. Kept up past a Stop it goes on saying Auto
+    // "is retrying" on behalf of a job that no longer exists — and nothing
+    // downstream of a stop raises a banner of its own to replace it.
+    hideBanner();
   };
 
   // Accept or reject one bucket through Auto's own queue — actOnce is the
