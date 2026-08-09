@@ -185,6 +185,16 @@
         <input id="auto-mutuals" type="number" min="0" step="1" value="10" class="num">
         <span>mutuals, reject the rest</span>
       </div>
+
+      <!-- A named-handle override, separate from the numeric rule above: it
+           always accepts rather than adjusting the threshold, so it reads as
+           its own sentence instead of another clause in "Accept >= N". -->
+      <div class="auto-rule">
+        <label for="auto-priority">Also accept if mutual with:</label>
+      </div>
+      <input id="auto-priority" type="text" placeholder="comma-separated handles" class="auto-priority">
+      <p class="auto-hint">Matches only the ~3 mutual names Instagram shows per row, not your full mutual list.</p>
+
       <button id="auto-run" type="button" class="btn btn-primary">Run</button>
     </div>
   </div>

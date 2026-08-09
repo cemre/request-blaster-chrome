@@ -2,6 +2,8 @@
 //
 // Everything here is directly unit-testable under `node --test`.
 
+import { normalizeHandle } from './alias.js';
+
 export const BOT_RATIO_MIN_FOLLOWING = 1000;
 export const BOT_RATIO_THRESHOLD = 10;
 
@@ -245,20 +247,42 @@ export function countHiddenByUnknownMutuals(rows, filters) {
 }
 
 /**
+ * The user's "always accept if mutual with" list, as free text. Split on
+ * commas rather than requiring a strict format, run each piece through the
+ * same normalizeHandle the rest of the app already compares handles with,
+ * and drop anything that normalizes to nothing.
+ */
+export function parsePriorityHandles(text) {
+  if (typeof text !== 'string') return [];
+  return [...new Set(text.split(',').map(normalizeHandle).filter(Boolean))];
+}
+
+/**
  * Auto-triage's rule, applied once: accept at or above the threshold, reject
  * strictly below it, and leave alone whatever mutuals could not be pinned
  * down. Rejecting on a guess is the one mistake here that cannot be undone,
  * so a row this cannot place goes to neither pile.
+ *
+ * A below-threshold row still gets accepted if one of its mutual names is on
+ * priorityHandles — Instagram only ever surfaces ~3 mutual names per row
+ * (see toCachedProfile), so this is matching against a sample, not the row's
+ * full mutual list.
  */
-export function splitByMutuals(rows, minMutuals) {
+export function splitByMutuals(rows, minMutuals, priorityHandles = new Set()) {
   const accept = [];
   const reject = [];
   const unknown = [];
 
   for (const row of rows) {
-    if (typeof row.mutuals !== 'number') unknown.push(row);
-    else if (row.mutuals >= minMutuals) accept.push(row);
-    else reject.push(row);
+    if (typeof row.mutuals !== 'number') {
+      unknown.push(row);
+    } else if (row.mutuals >= minMutuals) {
+      accept.push(row);
+    } else if (row.mutualNames?.some((name) => priorityHandles.has(normalizeHandle(name)))) {
+      accept.push(row);
+    } else {
+      reject.push(row);
+    }
   }
 
   return { accept, reject, unknown };

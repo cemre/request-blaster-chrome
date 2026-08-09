@@ -23,6 +23,7 @@ import {
   nextRateLimitWait,
   noteRateLimitBlock,
   parseMutualCount,
+  parsePriorityHandles,
   rangeIds,
   sortRows,
   splitByMutuals,
@@ -225,6 +226,41 @@ test('splitByMutuals accepts at the threshold, rejects below it, leaves unknown 
   const { accept, reject, unknown } = splitByMutuals(rows, 5);
   assert.deepEqual(accept.map((r) => r.username).sort(), ['atFloor', 'overFloor']);
   assert.deepEqual(reject.map((r) => r.username), ['underFloor']);
+  assert.deepEqual(unknown.map((r) => r.username), ['noHint']);
+});
+
+test('parsePriorityHandles normalizes and dedupes free-typed handles', () => {
+  assert.deepEqual(
+    parsePriorityHandles('@Alice, bob/, alice,  , Carol'),
+    ['alice', 'bob', 'carol']
+  );
+  assert.deepEqual(parsePriorityHandles(''), []);
+  assert.deepEqual(parsePriorityHandles(null), []);
+});
+
+test('splitByMutuals accepts a below-threshold row that shares a priority mutual', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'matched' },
+      { pk: '2', username: 'unmatched' },
+      { pk: '3', username: 'alreadyOver' },
+      { pk: '4', username: 'noHint' },
+    ],
+    {},
+    {
+      1: { mutualCount: 2, mutualNames: ['dave', 'priorityfriend'] },
+      2: { mutualCount: 2, mutualNames: ['dave', 'eve'] },
+      3: { mutualCount: 10, mutualNames: ['dave'] },
+    }
+  );
+
+  const priorityHandles = new Set(['priorityfriend']);
+  const { accept, reject, unknown } = splitByMutuals(rows, 5, priorityHandles);
+
+  assert.deepEqual(accept.map((r) => r.username).sort(), ['alreadyOver', 'matched']);
+  assert.deepEqual(reject.map((r) => r.username), ['unmatched']);
+  // An unenriched row has no mutual names to match against regardless of the
+  // priority list, so it still lands in unknown rather than being rescued.
   assert.deepEqual(unknown.map((r) => r.username), ['noHint']);
 });
 

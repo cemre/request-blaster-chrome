@@ -25,6 +25,7 @@ import {
   mergeRows,
   nextRateLimitWait,
   noteRateLimitBlock,
+  parsePriorityHandles,
   rangeIds,
   sortRows,
   splitByMutuals,
@@ -1549,7 +1550,7 @@ function syncAutoTriage() {
  * Deliberately ignores the filter chips: this is a rule about the whole
  * pending list, not about whatever was last being browsed with them.
  */
-function startAutoTriage(minMutuals) {
+function startAutoTriage(minMutuals, priorityHandles) {
   state.selected.clear();
   renderer.setSelection(state.selected);
   updateBulkBar();
@@ -1560,11 +1561,11 @@ function startAutoTriage(minMutuals) {
     scope: 'requests',
     ids: live.map((row) => row.id),
     spec: { label: 'Auto', gerund: 'Auto' },
-    run: (job) => runAutoTriage(job, minMutuals),
+    run: (job) => runAutoTriage(job, minMutuals, priorityHandles),
   });
 }
 
-async function runAutoTriage(job, minMutuals) {
+async function runAutoTriage(job, minMutuals, priorityHandles) {
   let stopped = false;
   let activeQueue = null;
   job.stop = () => {
@@ -1703,7 +1704,7 @@ async function runAutoTriage(job, minMutuals) {
       if (stopped) break;
     }
 
-    const { accept, reject, unknown } = splitByMutuals(live(), minMutuals);
+    const { accept, reject, unknown } = splitByMutuals(live(), minMutuals, priorityHandles);
     // Released rather than left claimed: nothing further happens to these
     // this run, so they are not "spoken for" any more than any other row.
     for (const row of unknown) jobs.handled(job, row.id);
@@ -2134,8 +2135,16 @@ function bind() {
     $('auto-toggle').focus();
   });
 
+  const savePriorityHandles = async () => {
+    state.settings.autoPriorityHandlesText = $('auto-priority').value;
+    await store.saveSettings(state.settings);
+  };
+  $('auto-priority').addEventListener('change', savePriorityHandles);
+
   $('auto-run').addEventListener('click', async () => {
     const minMutuals = Math.max(0, Math.floor(Number($('auto-mutuals').value) || 0));
+    const priorityHandles = new Set(parsePriorityHandles($('auto-priority').value));
+    await savePriorityHandles();
     setAutoOpen(false);
 
     const confirmed = await confirmAction({
@@ -2145,7 +2154,7 @@ function bind() {
     });
     if (!confirmed) return;
 
-    startAutoTriage(minMutuals);
+    startAutoTriage(minMutuals, priorityHandles);
   });
 
   // Screenshot mode. Matched on event.code because Option+S on macOS types
@@ -2279,6 +2288,7 @@ async function init() {
   bind();
   document.body.classList.toggle('is-anon', anon.isOn());
   $('sort').value = state.settings.sort;
+  $('auto-priority').value = state.settings.autoPriorityHandlesText;
   setMode('requests');
 
   await loadPending();
