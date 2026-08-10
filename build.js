@@ -129,6 +129,13 @@ function transformManifest(version) {
   const manifest = JSON.parse(readFileSync(path, 'utf8'));
 
   manifest.version = version;
+
+  // The `key` pins the extension ID for the unpacked copy, so moving this
+  // folder stops looking to Chrome like a different extension and taking the
+  // storage with it. It is development-only: the Web Store issues the
+  // published extension its own identity, and a package arriving with a key of
+  // its own is a package claiming an ID that is not the one being updated.
+  delete manifest.key;
   manifest.permissions = manifest.permissions.filter((p) => !HARVEST_PERMISSIONS.includes(p));
   for (const script of manifest.content_scripts ?? []) {
     script.js = script.js.filter((file) => !HARVEST_CONTENT_SCRIPTS.includes(file));
@@ -159,6 +166,10 @@ function verify() {
 
   // 2. The manifest agrees.
   const manifest = JSON.parse(read('manifest.json'));
+  // The dev key must not ship — see transformManifest. Checked here rather
+  // than trusted there because the failure is silent until upload, where it
+  // reads as an ID mismatch rather than as anything to do with this file.
+  if ('key' in manifest) problems.push('manifest still carries the development "key"');
   for (const permission of HARVEST_PERMISSIONS) {
     if (manifest.permissions.includes(permission)) problems.push(`manifest still requests "${permission}"`);
   }
