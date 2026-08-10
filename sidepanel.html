@@ -246,12 +246,25 @@
     <button class="log-tab" data-kind="accepted">Accepted<span id="log-tab-accepted-count" class="log-tab-count" hidden></span></button>
     <button class="log-tab" data-kind="rejected">Rejected<span id="log-tab-rejected-count" class="log-tab-count" hidden></span></button>
 
-    <button id="log-search-toggle" type="button" class="icon-toggle" aria-expanded="false" aria-controls="log-search" aria-label="Search username" title="Search username">
-      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
-        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
-        <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></line>
-      </svg>
-    </button>
+    <!-- Both trailing controls in one group, so the bar has a single thing to
+         push to the right. Two siblings each carrying `margin-left: auto`
+         would split the free space between them and land one in the middle. -->
+    <div class="filter-bar-actions">
+      <button id="log-export" type="button" class="icon-toggle" aria-label="Export the whole log as JSON" title="Export the whole log as JSON">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+          <line x1="8" y1="2" x2="8" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></line>
+          <polyline points="4.6,7 8,10.4 11.4,7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></polyline>
+          <path d="M2.6 11.6v1.2a1 1 0 0 0 1 1h8.8a1 1 0 0 0 1-1v-1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+        </svg>
+      </button>
+
+      <button id="log-search-toggle" type="button" class="icon-toggle" aria-expanded="false" aria-controls="log-search" aria-label="Search username" title="Search username">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+          <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+          <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></line>
+        </svg>
+      </button>
+    </div>
   </div>
 
   <input id="log-search" type="search" class="search" placeholder="Search username" autocomplete="off" hidden>

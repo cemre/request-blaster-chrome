@@ -353,6 +353,17 @@ h1 {
 /* Hard right, whatever the chips before it happen to measure. */
 .filter-bar .icon-toggle { margin-left: auto; }
 
+/* The log bar has two of them, and `auto` on each would share the free space
+   out rather than pool it. The group takes the push; its members give it up. */
+.filter-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.filter-bar-actions .icon-toggle { margin-left: 0; }
+
 .result-bar {
   display: flex;
   align-items: center;

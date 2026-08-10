@@ -931,6 +931,69 @@ async function loadLogPage() {
 }
 
 /**
+ * The whole log, as a JSON file.
+ *
+ * Read straight from storage rather than from `state.log.records`, which holds
+ * only the day shards the view has paged in — a backup that quietly stopped at
+ * whatever happened to be on screen would be worse than no backup, because you
+ * would not find out until you needed it.
+ *
+ * Nothing is pruned or written on the way past: an export is a read.
+ *
+ * Records go out raw, unmasked. Screenshot mode is about what a screen shows;
+ * a backup full of pseudonyms would restore nothing.
+ */
+async function exportLog() {
+  const button = $('log-export');
+  button.disabled = true;
+
+  try {
+    const index = await store.loadLogIndex();
+    const records = history.sortRecords(await store.loadLogDays(index));
+
+    if (records.length === 0) {
+      setStatus('Nothing in the log to export.');
+      return;
+    }
+
+    const manifest = chrome.runtime.getManifest();
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      extension: manifest.name,
+      version: manifest.version,
+      days: index.length,
+      count: records.length,
+      // Newest first, the same order the log itself is read in.
+      records,
+    };
+
+    // A blob URL and an anchor rather than the downloads API: the store build
+    // ships without the `downloads` permission — see build.js — and a backup
+    // the published extension cannot make is not a backup anyone has.
+    const url = URL.createObjectURL(
+      new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `request-blaster-log-${history.dayKeyDate(history.dayKey(Date.now()))}.json`;
+    // In the document rather than detached: a click on an unparented anchor is
+    // ignored outright in some engines, and this has one chance to work.
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Not revoked inline — the download reads the blob after this frame, and
+    // pulling the URL out from under it cancels the save.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+
+    setStatus(`Exported ${records.length} record${records.length === 1 ? '' : 's'} from ${index.length} day${index.length === 1 ? '' : 's'}.`);
+  } catch (err) {
+    reportError(err);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/**
  * A shard changed under us — an accept or reject from the on-page banner, or
  * one of our own writes coming back around. Both arrive here, which is what
  * keeps the log current while a run is in progress.
@@ -1943,6 +2006,8 @@ function bindLog() {
   });
 
   $('log-older').addEventListener('click', () => loadLogPage());
+  // No confirm: it writes a file and touches nothing else.
+  $('log-export').addEventListener('click', () => exportLog());
 
   const list = $('log-list');
 
