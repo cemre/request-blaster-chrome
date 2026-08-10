@@ -43,6 +43,12 @@ export class ListRenderer {
     this.rendered = 0;
     this.nodesById = new Map();
     this.claims = new Map();
+    // Rows whose last hydration attempt failed, as `Map<id, { label, detail }>`.
+    // Held here for the same reason claims are: a chip written straight onto a
+    // node does not survive the node, and these have to outlive both the
+    // updateRow that clears the "Loading…" off the failing row and the full
+    // setRows that recompute does when the run finishes.
+    this.failures = new Map();
     // The one row Auto is currently spotlighting — see setActiveRow. Held
     // here rather than as a class only, so a row rebuilt mid-spotlight (its
     // own data arriving) comes back out of buildRow still carrying it.
@@ -159,6 +165,40 @@ export class ListRenderer {
   setClaims(claims) {
     this.claims = claims;
     for (const [id, node] of this.nodesById) this.applyClaim(id, node);
+  }
+
+  /**
+   * The rows whose last load attempt failed, as `Map<id, { label, detail }>`.
+   * Rewritten whole, like setClaims — the panel owns the map and this only
+   * repaints from it.
+   */
+  setFailures(failures) {
+    this.failures = failures;
+    for (const [id, node] of this.nodesById) this.applyFailure(id, node);
+  }
+
+  applyFailure(id, node) {
+    const failure = this.failures.get(id);
+
+    if (!failure) {
+      // Only a chip this method wrote is taken back, on the same rule
+      // applyClaim goes by: a "Loading…" or an "Accepted" on this row belongs
+      // to something that is happening now and is not ours to clear.
+      if (node.dataset.chip === 'failure') {
+        node.querySelector('.row-state')?.remove();
+        node.classList.remove('has-state', 'is-failed');
+        delete node.dataset.chip;
+      }
+      return;
+    }
+
+    node.classList.add('is-failed');
+    const chip = this.stateChip(node);
+    chip.textContent = failure.label;
+    // Two words cannot carry a 404 apart from a challenge apart from a dead
+    // socket, and the difference decides whether retrying is worth anything.
+    chip.title = failure.detail || '';
+    node.dataset.chip = 'failure';
   }
 
   /** The status column, opened on demand — rows carry no buttons to fill it. */
@@ -378,8 +418,11 @@ export class ListRenderer {
     // fetched and cached — the "Empty bio" spam filter reads it.
     node.appendChild(main);
 
-    // Last, so a row the scroller mounts into a run in progress comes up already
-    // inert and already labelled rather than live for a frame.
+    // Both last, so a row the scroller mounts into a run in progress comes up
+    // already inert and already labelled rather than live for a frame. The
+    // claim goes second: a row queued for an accept is about to be written to,
+    // and what is coming is worth more than how its last load went.
+    this.applyFailure(row.id, node);
     this.applyClaim(row.id, node);
 
     return node;

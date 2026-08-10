@@ -11,6 +11,7 @@ import {
   applyFilters,
   approximateMutuals,
   countHiddenByUnknownMutuals,
+  describeHydrationFailure,
   filtersActive,
   formatCount,
   formatCountdown,
@@ -288,6 +289,37 @@ test('the reported rows no longer claim a count Instagram never gave', () => {
 
   assert.equal(formatMutuals(rows[0]), '? mutuals', 'was "0 mutuals" while the profile showed 2');
   assert.equal(formatMutuals(rows[1]), '? mutuals', 'was "0 mutuals" while the profile showed 17');
+});
+
+test('describeHydrationFailure names what went wrong, and keeps the evidence', () => {
+  const label = (result) => describeHydrationFailure(result).label;
+
+  // The reasons content.js sets, which are the readings worth trusting.
+  assert.equal(label({ ok: false, loggedOut: true, reason: 'signed_out', status: 401 }), 'Signed out');
+  assert.equal(label({ ok: false, blocked: true, reason: 'session_rejected', status: 401 }), 'Rate limited');
+  assert.equal(label({ ok: false, blocked: true, reason: 'rate_limited', status: 429 }), 'Rate limited');
+  assert.equal(label({ ok: false, blocked: true, reason: 'checkpoint', status: 200 }), 'Check Instagram');
+  assert.equal(label({ ok: false, blocked: true, reason: 'challenge', status: 200 }), 'Check Instagram');
+  assert.equal(label({ ok: false, blocked: true, reason: 'html_response', status: 200 }), 'Bad response');
+
+  // The unclassified ones, which is where a single row's own failure lands —
+  // a queue-wide halt always carries a reason, so anything without one is
+  // about this profile rather than about the session.
+  assert.equal(label({ ok: false, status: 404, error: 'HTTP 404' }), 'No profile');
+  assert.equal(label({ ok: false, status: 0, error: 'network: Failed to fetch' }), 'Network error');
+  assert.equal(label({ ok: false, error: 'unexpected profile shape' }), 'Bad response');
+  assert.equal(label({ ok: false, status: 500, error: 'HTTP 500' }), 'Failed');
+  assert.equal(label(null), 'Failed');
+
+  // A chip of two words is a summary, and a summary you cannot check against
+  // what was actually said is worth very little — the detail rides the title.
+  assert.equal(
+    describeHydrationFailure({ ok: false, blocked: true, reason: 'rate_limited', status: 429, error: 'Please wait a few minutes' }).detail,
+    'rate_limited · Please wait a few minutes'
+  );
+  assert.equal(describeHydrationFailure({ ok: false, status: 404, error: 'HTTP 404' }).detail, 'HTTP 404');
+  assert.equal(describeHydrationFailure({ ok: false, status: 503 }).detail, 'HTTP 503');
+  assert.equal(describeHydrationFailure(null).detail, 'Instagram did not answer.');
 });
 
 test('sortRows ranks an unknown count below known ones but above a confirmed zero', () => {

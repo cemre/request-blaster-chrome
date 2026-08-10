@@ -387,6 +387,51 @@ export function formatMutuals(row) {
   return `${row.enriched ? '' : '~'}${row.mutuals} ${noun}`;
 }
 
+/**
+ * A failed hydration as the row itself should show it: a two-word chip and the
+ * evidence behind it.
+ *
+ * Hydration used to be the one queue that swallowed this. A profile fetch that
+ * 404'd or came back in an unexpected shape had its "Loading…" chip taken back
+ * off and the un-enriched row rebuilt underneath — leaving a row that had been
+ * tried and failed looking exactly like one that had never been reached, both
+ * of them still reading "? mutuals". Accepts and rejects have always marked
+ * their own failures (see actOnce); this is hydration doing the same.
+ *
+ * `reason` is content.js's own reading of the response and is taken first where
+ * it exists — a queue-wide halt always carries one. Anything without a reason
+ * is a failure about this one profile rather than about the session, so the
+ * status and the message decide.
+ */
+export function describeHydrationFailure(result) {
+  const label = (() => {
+    switch (result?.reason) {
+      case 'signed_out': return 'Signed out';
+      case 'session_rejected':
+      case 'rate_limited': return 'Rate limited';
+      case 'checkpoint':
+      case 'challenge': return 'Check Instagram';
+      case 'html_response': return 'Bad response';
+      default: break;
+    }
+
+    // status 0 is igFetch's own marker for a fetch that never got an answer.
+    if (result?.status === 0) return 'Network error';
+    // The account was renamed, deactivated or deleted between the pending list
+    // being served and this row's turn coming up. Retrying will not fix it.
+    if (result?.status === 404) return 'No profile';
+    if (result?.error === 'unexpected profile shape') return 'Bad response';
+    return 'Failed';
+  })();
+
+  const parts = [];
+  if (result?.reason) parts.push(result.reason);
+  if (result?.error) parts.push(result.error);
+  else if (typeof result?.status === 'number' && result.status > 0) parts.push(`HTTP ${result.status}`);
+
+  return { label, detail: parts.join(' · ') || 'Instagram did not answer.' };
+}
+
 export function formatCount(value) {
   if (value === null || value === undefined) return '—';
   if (value < 1000) return String(value);

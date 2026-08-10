@@ -18,6 +18,7 @@ import {
   DEFAULT_FILTERS,
   applyFilters,
   countHiddenByUnknownMutuals,
+  describeHydrationFailure,
   filtersActive,
   formatCountdown,
   formatShownCount,
@@ -108,6 +109,11 @@ const state = {
   // several between them and must each say which is which.
   hydrationProgress: null,  // { done, total }
   loading: false,
+
+  // The rows whose last load attempt failed, as `Map<id, { label, detail }>`.
+  // Kept past the end of the run that wrote them: "3 failures" in the status
+  // line names a number, and the only way to act on it is to know which rows.
+  hydrationFailures: new Map(),
 
   // 'requests' | 'log'. The log is loaded lazily and only ever holds the day
   // shards actually asked for.
@@ -814,6 +820,10 @@ function syncToolbar() {
 
 function rebuildRows() {
   state.rows = mergeRows(state.pendingUsers, state.statuses, state.cache);
+  // A fresh queue from Instagram is a fresh set of rows; a failure recorded
+  // against the last one has nothing left to be about.
+  state.hydrationFailures.clear();
+  renderer.setFailures(state.hydrationFailures);
 }
 
 // ------------------------------------------------------- screenshot mode
@@ -1179,6 +1189,18 @@ async function loadPending({ useSnapshot = true } = {}) {
 // ---------------------------------------------------------------- hydration
 
 /**
+ * Record that this row's load failed, and paint it.
+ *
+ * Written to state rather than straight onto the node because neither survives
+ * the node: the failing row is rebuilt by updateRow moments later, and the
+ * whole list is rebuilt again by the recompute at the end of the run.
+ */
+function noteHydrationFailure(row, result) {
+  state.hydrationFailures.set(row.id, describeHydrationFailure(result));
+  renderer.setFailures(state.hydrationFailures);
+}
+
+/**
  * @param targets rows to enrich; defaults to what "Load details" itself
  *   offers — everything unenriched currently in view. Auto passes its own
  *   list, since it ignores the filters "in view" is scoped by.
@@ -1204,6 +1226,13 @@ async function runHydrationBatch(targets = state.visible.filter((row) => !row.en
   // The row is about to become the only progress indicator, so clear whatever
   // the last run left behind rather than let it read as news about this one.
   setStatus('');
+
+  // Only the rows this run is about to re-attempt. A failure on a row outside
+  // `targets` is still the last thing known about that row — a filter change
+  // between runs must not quietly clear it.
+  for (const row of targets) state.hydrationFailures.delete(row.id);
+  renderer.setFailures(state.hydrationFailures);
+
   const fresh = {};
   let flushed = 0;
   let outcome = null;
@@ -1232,18 +1261,23 @@ async function runHydrationBatch(targets = state.visible.filter((row) => !row.en
       if (targets[i + 1]) onItem(targets[i + 1]);
 
       if (!result?.ok) {
-        // Rebuilt from the same unenriched row that is already on screen —
-        // there is nothing new to show, so this just takes the "Loading…"
-        // chip back off rather than leaving it stuck on a row nothing is
-        // happening to any more.
+        // Rebuilt from the same unenriched row that is already on screen, so
+        // the "Loading…" chip comes off — but not silently. Without the mark
+        // below, a row that was tried and failed came back looking exactly
+        // like one the run had not reached yet, both still reading
+        // "? mutuals", and the only trace was a failure count in the status
+        // line that named no rows.
+        noteHydrationFailure(row, result);
         renderer.updateRow(row);
         return result || { ok: false, error: 'no response' };
       }
 
       const profile = toCachedProfile(result.data);
       if (!profile) {
+        const failure = { ok: false, error: 'unexpected profile shape' };
+        noteHydrationFailure(row, failure);
         renderer.updateRow(row);
-        return { ok: false, error: 'unexpected profile shape' };
+        return failure;
       }
 
       state.cache[row.id] = profile;
@@ -1289,7 +1323,9 @@ async function runHydrationBatch(targets = state.visible.filter((row) => !row.en
           { detail: halt }
         );
       } else if (stopped) setStatus('Enrichment stopped.');
-      else if (failures.length) setStatus(`Enriched with ${failures.length} failure${failures.length === 1 ? '' : 's'}.`);
+      // Pointing at the rows rather than just counting them: the count was the
+      // whole of what this used to say, and a count names nothing you can act on.
+      else if (failures.length) setStatus(`Enriched with ${failures.length} failure${failures.length === 1 ? '' : 's'} — the marked rows say why.`);
       else {
         setStatus('');
         await store.clearRateLimitEpoch();
@@ -1314,6 +1350,9 @@ async function runHydrationBatch(targets = state.visible.filter((row) => !row.en
 function markDone(id, outcome, message) {
   state.doneIds.add(id);
   state.selected.delete(id);
+  // On its way off the list, so whatever its last load did is moot — and the
+  // map is not a place for ids that no longer name a row.
+  state.hydrationFailures.delete(id);
   // Shared with the on-page banner so it stops offering this profile.
   store.addHandledId(id);
   renderer.markRow(id, outcome, message);
