@@ -1445,13 +1445,20 @@ function followGap() {
  * Append to the action log. Deliberately not awaited: the log records triage,
  * it is not part of it, and a storage hiccup must never stall a paced queue.
  */
-function logAction({ id, username }, action) {
-  const record = history.buildRecord({ at: Date.now(), userId: id, username, action });
+function logAction({ id, username }, action, { guessed = false } = {}) {
+  const record = history.buildRecord({ at: Date.now(), userId: id, username, action, guessed });
   store.appendAction(record);
   return record;
 }
 
-async function actOnce(id, action) {
+/**
+ * @param guessing  the caller is Auto in fast mode, where a row with no mutual
+ *   count is rejected as though it had none. Whether *this* row was actually
+ *   decided that way is settled below, against the row: fast mode rejects
+ *   plenty of rows on a real, if approximate, count, and marking those as
+ *   guesses would leave the log's mark meaning nothing.
+ */
+async function actOnce(id, action, { guessing = false } = {}) {
   const row = state.rows.find((candidate) => candidate.id === id);
   if (!row) return { ok: false, error: 'row not found' };
 
@@ -1466,7 +1473,8 @@ async function actOnce(id, action) {
 
   if (action !== 'approveFollow') {
     const logged = action === 'ignore' ? history.REJECT : history.ACCEPT;
-    logAction(row, logged);
+    const guessed = guessing && logged === history.REJECT && typeof row.mutuals !== 'number';
+    logAction(row, logged, { guessed });
     markDone(id, action === 'ignore' ? 'rejected' : 'accepted', spec.done);
     return result;
   }
@@ -1687,7 +1695,7 @@ function syncAutoTriage() {
  * Deliberately ignores the filter chips: this is a rule about the whole
  * pending list, not about whatever was last being browsed with them.
  */
-function startAutoTriage(minMutuals, priorityHandles) {
+function startAutoTriage(minMutuals, priorityHandles, fast = false) {
   state.selected.clear();
   renderer.setSelection(state.selected);
   updateBulkBar();
@@ -1698,11 +1706,17 @@ function startAutoTriage(minMutuals, priorityHandles) {
     scope: 'requests',
     ids: live.map((row) => row.id),
     spec: { label: 'Auto', gerund: 'Auto' },
-    run: (job) => runAutoTriage(job, minMutuals, priorityHandles),
+    run: (job) => runAutoTriage(job, minMutuals, priorityHandles, fast),
   });
 }
 
-async function runAutoTriage(job, minMutuals, priorityHandles) {
+/**
+ * @param fast  Decide on the pending list's free social_context estimate alone
+ *   and treat a missing hint as 0 mutuals, so no row is ever hydrated. Trades
+ *   precision for wall-clock — the cost is argued in model.js above
+ *   splitByMutuals and named to the operator in the Run confirm.
+ */
+async function runAutoTriage(job, minMutuals, priorityHandles, fast = false) {
   let stopped = false;
   let activeQueue = null;
   job.stop = () => {
@@ -1795,7 +1809,7 @@ async function runAutoTriage(job, minMutuals, priorityHandles) {
       items: ids,
       pacing: PACING.moderate,
       handler: async (id, i) => {
-        const result = await actOnce(id, action);
+        const result = await actOnce(id, action, { guessing: fast });
         if (!result?.blocked && !result?.loggedOut) jobs.handled(job, id);
         if (ids[i + 1]) activate(ids[i + 1]);
         return result;
@@ -1831,7 +1845,11 @@ async function runAutoTriage(job, minMutuals, priorityHandles) {
 
     // The real count keeps ticking in the header's own hydration meter — this
     // bar just says why the run is quiet right now.
-    const missing = live().filter((row) => !row.enriched);
+    //
+    // Fast mode's entire speedup is this block not happening: it is one
+    // profile request per un-enriched row at PACING.moderate, and on a live
+    // queue most rows are un-enriched. Nothing else about the run changes.
+    const missing = fast ? [] : live().filter((row) => !row.enriched);
     if (missing.length > 0) {
       const hydration = runHydrationBatch(missing, (row) => {
         renderer.revealRow(row.id);
@@ -1861,16 +1879,21 @@ async function runAutoTriage(job, minMutuals, priorityHandles) {
       if (stopped) break;
     }
 
-    const { accept, reject, unknown } = splitByMutuals(live(), minMutuals, priorityHandles);
+    const { accept, reject, unknown } = splitByMutuals(
+      live(), minMutuals, priorityHandles, { unknownIsZero: fast }
+    );
     // Released rather than left claimed: nothing further happens to these
     // this run, so they are not "spoken for" any more than any other row.
     for (const row of unknown) jobs.handled(job, row.id);
     syncClaims();
 
     if (accept.length === 0 && reject.length === 0) {
+      // Fast mode leaves no unknowns by construction, so that clause would be
+      // a permanent "0 left" — a number that can only ever say one thing is
+      // noise in a summary read once.
       setStatus(
-        `Done — ${acceptedTotal} accepted, ${rejectedTotal} rejected, `
-        + `${unknown.length} left with unknown mutuals.`
+        `Done — ${acceptedTotal} accepted, ${rejectedTotal} rejected`
+        + (fast ? '.' : `, ${unknown.length} left with unknown mutuals.`)
       );
       return {};
     }
@@ -2339,20 +2362,42 @@ function bind() {
   };
   $('auto-priority').addEventListener('change', savePriorityHandles);
 
+  $('auto-fast').addEventListener('change', async () => {
+    state.settings.autoFast = $('auto-fast').checked;
+    await store.saveSettings(state.settings);
+  });
+
   $('auto-run').addEventListener('click', async () => {
     const minMutuals = Math.max(0, Math.floor(Number($('auto-mutuals').value) || 0));
     const priorityHandles = new Set(parsePriorityHandles($('auto-priority').value));
+    const fast = $('auto-fast').checked;
     await savePriorityHandles();
     setAutoOpen(false);
 
+    // Fast mode's cost is a specific number of specific people, and it is
+    // knowable before the run rather than only afterwards in the log — so it
+    // is said here, where there is still a Cancel. Counted off the loaded
+    // queue the run is about to work through, which is what `live` means in
+    // startAutoTriage too.
+    const blind = state.rows.filter(
+      (row) => !state.doneIds.has(row.id) && typeof row.mutuals !== 'number'
+    ).length;
+    const pending = state.rows.filter((row) => !state.doneIds.has(row.id)).length;
+
     const confirmed = await confirmAction({
-      title: `Accept ${minMutuals}+ mutuals, reject the rest?`,
-      body: 'Repeats automatically, refreshing for more, until nothing’s left to decide.',
+      title: fast
+        ? `Accept ${minMutuals}+ mutuals, reject the rest — fast?`
+        : `Accept ${minMutuals}+ mutuals, reject the rest?`,
+      body: fast
+        ? `Skips loading details, so ${blind} of ${pending} requests get rejected on `
+          + 'no mutual count at all — Instagram omits it for most requests even when '
+          + 'mutuals exist. Can’t be undone. Repeats until nothing’s left to decide.'
+        : 'Repeats automatically, refreshing for more, until nothing’s left to decide.',
       warn: true,
     });
     if (!confirmed) return;
 
-    startAutoTriage(minMutuals, priorityHandles);
+    startAutoTriage(minMutuals, priorityHandles, fast);
   });
 
   // Screenshot mode. Matched on event.code because Option+S on macOS types
@@ -2487,6 +2532,7 @@ async function init() {
   document.body.classList.toggle('is-anon', anon.isOn());
   $('sort').value = state.settings.sort;
   $('auto-priority').value = state.settings.autoPriorityHandlesText;
+  $('auto-fast').checked = state.settings.autoFast;
   setMode('requests');
 
   await loadPending();

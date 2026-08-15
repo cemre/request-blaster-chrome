@@ -50,6 +50,25 @@ test('numeric ids normalise to strings so lookups match', () => {
   assert.equal(rec({ userId: 100011 }).userId, '100011');
 });
 
+// Auto's fast mode rejects on the free estimate alone, counting a missing
+// mutual hint as zero. The log is the only way back to someone it got wrong,
+// and "every rejection" is a worse place to start looking than "the ones
+// decided without evidence" — so those carry the distinction.
+test('a fast-mode guess is marked, and nothing else is', () => {
+  assert.equal(rec({ action: REJECT, guessed: true }).guessed, true);
+  assert.equal('guessed' in rec({ action: REJECT }), false, 'absent, not false');
+  assert.equal('guessed' in rec({ action: REJECT, guessed: false }), false);
+});
+
+// Two years of existing records predate the field, and the mark is not part of
+// what happened — it is how it was decided — so it must not move a record's
+// identity or the de-duplication that rides on it.
+test('the mark leaves record identity alone', () => {
+  const guessed = rec({ at: 1000, userId: '7', action: REJECT, guessed: true });
+  const plain = rec({ at: 1000, userId: '7', action: REJECT });
+  assert.equal(recordKey(guessed), recordKey(plain));
+});
+
 test('recordKey matches the same action arriving twice', () => {
   const written = rec({ at: 1000, userId: '7', action: REJECT });
   const readBack = JSON.parse(JSON.stringify(written));

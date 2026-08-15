@@ -18,6 +18,10 @@ export const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const DEFAULT_SETTINGS = {
   sort: 'default',
   autoPriorityHandlesText: '',
+  // Auto's fast mode. Persisted like the rest of the Auto rule, but false here
+  // on purpose: it rejects rows on an absent mutual hint, so it is something
+  // switched on for a run rather than a state to wake up already in.
+  autoFast: false,
 };
 
 /** Hydrated profiles, keyed by user id, with expired entries dropped. */

@@ -217,6 +217,16 @@
       <input id="auto-priority" type="text" placeholder="comma-separated handles" class="handle-list-input">
       <p class="filter-hint">Matches only the ~3 mutual names Instagram shows per row, not your full mutual list.</p>
 
+      <!-- Skips hydration entirely, which is where a run spends its time. The
+           hint states the cost rather than the benefit: "fast" is the obvious
+           half, and a missing hint being counted as zero is the half that
+           decides whether this is the right choice. The number it costs on
+           *this* queue is named in the Run confirm, where there is a Cancel. -->
+      <label class="popover-check">
+        <input type="checkbox" id="auto-fast"><span>Fast (skip loading details)</span>
+      </label>
+      <p class="filter-hint">Counts a missing mutual hint as 0. Instagram omits it for most requests.</p>
+
       <button id="auto-run" type="button" class="btn btn-primary">Run</button>
     </div>
   </div>

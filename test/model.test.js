@@ -28,6 +28,7 @@ import {
   rangeIds,
   retryTimeLabel,
   sortRows,
+  parseMutualNames,
   splitByMutuals,
   toCachedProfile,
   usesEnrichedFilters,
@@ -264,6 +265,115 @@ test('splitByMutuals accepts a below-threshold row that shares a priority mutual
   // An unenriched row has no mutual names to match against regardless of the
   // priority list, so it still lands in unknown rather than being rescued.
   assert.deepEqual(unknown.map((r) => r.username), ['noHint']);
+});
+
+// ------------------------------------------------------- Auto's fast mode
+//
+// Fast mode decides on the free social_context estimate alone and counts a
+// missing hint as 0, so it never hydrates. What it buys and what it costs is
+// argued in docs/superpowers/specs/2026-08-15-auto-fast-mode-design.md; these
+// tests pin the mechanics, including the ones that keep the cost visible.
+
+test('unknownIsZero rejects the rows Instagram gave no hint for, leaving nothing undecided', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'overFloor', social_context: 'Followed by x + 9 more' }, // 10
+      { pk: '2', username: 'underFloor', social_context: 'Followed by x' }, // 1
+      { pk: '3', username: 'noHint' }, // null
+    ],
+    {},
+    {}
+  );
+
+  const { accept, reject, unknown } = splitByMutuals(rows, 5, new Set(), { unknownIsZero: true });
+
+  assert.deepEqual(accept.map((r) => r.username), ['overFloor']);
+  assert.deepEqual(reject.map((r) => r.username), ['underFloor', 'noHint']);
+  assert.deepEqual(unknown, [], 'fast mode leaves nothing for a later pass');
+});
+
+test('the default is unchanged — an unknown count is still not a zero', () => {
+  const rows = mergeRows([{ pk: '1', username: 'noHint' }], {}, {});
+
+  const { reject, unknown } = splitByMutuals(rows, 5);
+  assert.deepEqual(reject, [], 'without the option a missing hint must never reject');
+  assert.deepEqual(unknown.map((r) => r.username), ['noHint']);
+});
+
+// Fast mode declines to *perform* enrichment; it does not throw away enrichment
+// already paid for. A cached profile is free and exact, and using the estimate
+// over it would be strictly worse information for no saving.
+test('a cached row still decides on its exact count in fast mode', () => {
+  const rows = mergeRows(
+    [{ pk: '1', username: 'cached', social_context: 'Followed by x + 11 more' }], // estimates 12
+    {},
+    { 1: { mutualCount: 2, mutualNames: ['dave'] } }
+  );
+
+  const { accept, reject } = splitByMutuals(rows, 5, new Set(), { unknownIsZero: true });
+  assert.deepEqual(accept, [], 'the exact 2 outranks the estimated 12');
+  assert.deepEqual(reject.map((r) => r.username), ['cached']);
+});
+
+test('parseMutualNames reads the handles out of the same string parseMutualCount counts', () => {
+  assert.deepEqual(parseMutualNames('Followed by alice'), ['alice']);
+  assert.deepEqual(parseMutualNames('Followed by alice, bob'), ['alice', 'bob']);
+  assert.deepEqual(parseMutualNames('Followed by alice, bob + 3 more'), ['alice', 'bob']);
+  assert.deepEqual(parseMutualNames('Followed by alice and bob'), ['alice', 'bob']);
+  // The unnamed remainder is unrecoverable without hydration — the count knows
+  // about them, the names cannot.
+  assert.deepEqual(parseMutualNames('Followed by alice + 12 more'), ['alice']);
+});
+
+test('parseMutualNames names nobody where parseMutualCount counts nobody', () => {
+  assert.deepEqual(parseMutualNames('New to Instagram'), []);
+  assert.deepEqual(parseMutualNames(''), []);
+  assert.deepEqual(parseMutualNames(null), []);
+  assert.deepEqual(parseMutualNames(42), []);
+});
+
+test('an un-enriched row carries the mutual names its social_context named', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'hinted', social_context: 'Followed by alice, bob + 3 more' },
+      { pk: '2', username: 'noHint' },
+    ],
+    {},
+    {}
+  );
+
+  assert.deepEqual(rows[0].mutualNames, ['alice', 'bob']);
+  assert.deepEqual(rows[1].mutualNames, []);
+  assert.equal(rows[0].enriched, false, 'named without being enriched');
+});
+
+test('a hydrated profile still overwrites the names social_context guessed at', () => {
+  const rows = mergeRows(
+    [{ pk: '1', username: 'hinted', social_context: 'Followed by alice, bob + 3 more' }],
+    {},
+    { 1: { mutualCount: 5, mutualNames: ['carol', 'dave', 'erin'] } }
+  );
+
+  assert.deepEqual(rows[0].mutualNames, ['carol', 'dave', 'erin'], 'the exact list wins');
+});
+
+// The safety valve. Without names on un-enriched rows this rule silently never
+// fires in fast mode — the operator believes these people are protected while
+// they are being rejected, which is worse than having no valve at all.
+test('a priority mutual named in social_context rescues an un-enriched row', () => {
+  const rows = mergeRows(
+    [
+      { pk: '1', username: 'rescued', social_context: 'Followed by priorityfriend, bob' },
+      { pk: '2', username: 'notRescued', social_context: 'Followed by bob, carol' },
+    ],
+    {},
+    {}
+  );
+
+  const { accept, reject } = splitByMutuals(rows, 5, new Set(['priorityfriend']), { unknownIsZero: true });
+
+  assert.deepEqual(accept.map((r) => r.username), ['rescued']);
+  assert.deepEqual(reject.map((r) => r.username), ['notRescued']);
 });
 
 test('formatMutuals keeps unknown, estimated and exact visibly apart', () => {

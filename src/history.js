@@ -64,9 +64,21 @@ export function expiredDayKeys(index, now, retentionDays = RETENTION_DAYS) {
  * One line of the log. Only successful actions are recorded — a rejection that
  * failed did not happen, and logging it would make the log answer "what did I
  * try" when the question being asked is "what did I do".
+ *
+ * `guessed` marks a rejection Auto's fast mode made on no evidence — a row
+ * Instagram gave no mutual count for, rejected as if that meant zero. It is
+ * not part of *what happened*, which is why `recordKey` ignores it; it is how
+ * the decision was reached, kept because this log is the only route back to
+ * someone that mode got wrong, and "the ones decided blind" is a far better
+ * place to start looking than "every rejection".
  */
-export function buildRecord({ at, userId, username, action }) {
-  return { at, userId: String(userId), username, action };
+export function buildRecord({ at, userId, username, action, guessed = false }) {
+  const record = { at, userId: String(userId), username, action };
+  // Set only when true, never as `guessed: false`. Two years of stored records
+  // predate the field and read back without it, so absence has to mean the
+  // same thing as false or the log would sort its own history into two kinds.
+  if (guessed) record.guessed = true;
+  return record;
 }
 
 /**

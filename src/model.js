@@ -25,10 +25,18 @@ const DEFAULT_PIC_PATTERNS = [
  * for anything that isn't a followed-by string, so unrelated social contexts
  * ("New to Instagram") don't get counted as a mutual.
  */
-export function parseMutualCount(socialContext) {
-  if (typeof socialContext !== 'string') return 0;
+/**
+ * The two halves of a "Followed by …" string: who it named, and how many it
+ * declined to name. `null` for anything that isn't one.
+ *
+ * Split out so the count and the names come from one reading of the string
+ * rather than two parsers that could drift — they answer different questions
+ * about the same sentence.
+ */
+function parseSocialContext(socialContext) {
+  if (typeof socialContext !== 'string') return null;
   const text = socialContext.trim();
-  if (!/^followed by\b/i.test(text)) return 0;
+  if (!/^followed by\b/i.test(text)) return null;
 
   const tail = text.match(/(?:\+|\band\b)\s*([\d,]+)\s+(?:more|others?)/i);
   const extra = tail ? parseInt(tail[1].replace(/,/g, ''), 10) : 0;
@@ -39,9 +47,33 @@ export function parseMutualCount(socialContext) {
     .replace(/,\s*$/, '')
     .trim();
 
-  const named = namesPart ? namesPart.split(/,|\sand\s/i).filter((part) => part.trim()).length : 0;
+  const names = namesPart
+    ? namesPart.split(/,|\sand\s/i).map((part) => part.trim()).filter(Boolean)
+    : [];
 
-  return named + extra;
+  return { names, extra };
+}
+
+export function parseMutualCount(socialContext) {
+  const parsed = parseSocialContext(socialContext);
+  return parsed ? parsed.names.length + parsed.extra : 0;
+}
+
+/**
+ * The mutuals `social_context` actually named, e.g. `['alice', 'bob']`.
+ *
+ * Only the named ones: "+ 3 more" is a number in that string and nothing else,
+ * so those three are unrecoverable without hydration. That makes this a
+ * *partial* answer by construction — which is the same limit the enriched list
+ * already has (Instagram returns roughly three names either way, as the Auto
+ * popover's own hint says), rather than a new one.
+ *
+ * Exists so Auto's "always accept if mutual with @x" rule still fires in fast
+ * mode, where nothing is ever enriched and `mutualNames` would otherwise be
+ * empty on every row — a safety valve that fails silently is worse than none.
+ */
+export function parseMutualNames(socialContext) {
+  return parseSocialContext(socialContext)?.names ?? [];
 }
 
 /**
@@ -108,7 +140,12 @@ export function mergeRows(pendingUsers, friendshipStatuses = {}, profileCache = 
       followingCount: null,
       posts: null,
       bio: '',
-      mutualNames: [],
+
+      // Free from the pending list, like defaultPic above — the same string
+      // approxMutuals counts. A hydrated profile replaces this with the exact
+      // list below; until then it is the only way a name-matching rule can see
+      // an un-enriched row at all.
+      mutualNames: parseMutualNames(user.social_context),
     };
 
     if (cached) {
@@ -296,18 +333,32 @@ export function parsePriorityHandles(text) {
  * priorityHandles — Instagram only ever surfaces ~3 mutual names per row
  * (see toCachedProfile), so this is matching against a sample, not the row's
  * full mutual list.
+ *
+ * @param unknownIsZero  Auto's fast mode: count a row Instagram gave no hint
+ *   for as 0 mutuals rather than setting it aside, so `unknown` comes back
+ *   empty and the queue is fully decided without a single profile fetch.
+ *
+ *   This inverts the paragraph above, deliberately, and it is a real trade —
+ *   an absent social_context is not evidence of no mutuals (see the note above
+ *   ENRICHED_ONLY_FILTERS: 128 of 200 rows had none, and half of a sample of
+ *   those did have mutuals). Off by default, and whatever turns it on is
+ *   responsible for saying so first — see runAutoTriage's confirm.
  */
-export function splitByMutuals(rows, minMutuals, priorityHandles = new Set()) {
+export function splitByMutuals(rows, minMutuals, priorityHandles = new Set(), { unknownIsZero = false } = {}) {
   const accept = [];
   const reject = [];
   const unknown = [];
 
   for (const row of rows) {
-    if (typeof row.mutuals !== 'number') {
+    // Checked before the count so a named priority mutual rescues a row whose
+    // count is missing entirely, not just one whose count came in low.
+    const priority = row.mutualNames?.some((name) => priorityHandles.has(normalizeHandle(name)));
+
+    if (typeof row.mutuals !== 'number' && !unknownIsZero) {
       unknown.push(row);
-    } else if (row.mutuals >= minMutuals) {
+    } else if (priority) {
       accept.push(row);
-    } else if (row.mutualNames?.some((name) => priorityHandles.has(normalizeHandle(name)))) {
+    } else if ((row.mutuals ?? 0) >= minMutuals) {
       accept.push(row);
     } else {
       reject.push(row);

@@ -645,6 +645,14 @@ export function renderLog(container, records, {
         // What the chip gave up to make room. The date in full rather than the
         // chip's MM/DD, and the action name the mark is standing in front of.
         action.title = note.date ? `${label} · harvested ${note.date}` : label;
+      } else if (record.guessed) {
+        // Auto's fast mode rejected this one with no mutual count to go on.
+        // Marked rather than relabelled — the chip still says what happened,
+        // and this says how sure it was. Loses to a note on purpose: the note
+        // is about a later action on the row, which outranks how the original
+        // one was decided.
+        action.classList.add('is-guessed');
+        action.title = 'Rejected without loading details — Instagram gave no mutual count for this account';
       }
       row.appendChild(action);
 

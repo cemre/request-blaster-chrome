@@ -1256,6 +1256,17 @@ body.is-anon .avatar {
    spacing, so a column of dates lines up the way the timestamps beside them do. */
 .log-action.is-noted { font-variant-numeric: tabular-nums; }
 
+/* A rejection Auto's fast mode made with no mutual count to go on. Keeps the
+   action's own colour and text — what happened is unchanged, and this row is
+   not an error — so the mark has to be the quietest thing that still reads as
+   deliberate rather than as a rendering artifact. A dotted underline is that,
+   costs no width at 260px, and carries the explanation in its title. */
+.log-action.is-guessed {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
 .log-footer {
   display: flex;
   justify-content: space-between;
