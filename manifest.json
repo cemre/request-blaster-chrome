@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Request Blaster",
   "description": "Triage Instagram follow requests in bulk (e.g. accept everyone with N+ mutuals) – advanced controls to /blast/ through your queue.",
-  "version": "1.9",
+  "version": "1.10",
   "minimum_chrome_version": "114",
 
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvMogSjjdBG9+Ev6Ezf42P8x2dG25OvDOCjGku3aRGZhD7WDoTzA+S5MuPYNNN9azWE/ksSdMt3gcN4uvT53aIgIpY7B5FXPesZWrNIj+qo20LLi3npsZRIG76/+bJkTiQPmWnmmMZLfO+S47pswgiIJZfGUKbSOEvjSPLUzmcMwYRQ53og90/akdlsCUVJhpoPnc97f699C6wIdOAgQaWJTqBIW7F9OV/1+hKAvBXf4P+tvYY6lYujwgOw9lAXXvv8T3k8ZvN5Hb7NUyyu+KzbWgMWN3zjcwsY1iYrdtg4IfDo5HiNMYDTIjdPExZJe9ZUGCwTbsWOgNaNjAr1jv2wIDAQAB",
