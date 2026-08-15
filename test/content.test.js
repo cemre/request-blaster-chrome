@@ -21,9 +21,12 @@ function loadContentScript({ cookie = '', response } = {}) {
     chrome: { runtime: { onMessage: { addListener: () => {} } } },
     console,
     URL,
+    // `response` is one response for every call, or a function of the call
+    // index for the tests that need each attempt answered differently — the
+    // shape fallback only means anything across more than one request.
     fetch: async (url, init) => {
       calls.push({ url, init });
-      return response;
+      return typeof response === 'function' ? response(calls.length - 1, url, init) : response;
     },
   };
   vm.runInNewContext(SOURCE, context);
@@ -171,17 +174,99 @@ test('a status: fail body stays a plain failure and halts nothing', async () => 
   assert.equal(result.error, 'Something went wrong');
 });
 
-// Instagram flipped this endpoint's accepted method again — GET-with-query-
-// string answered 405 on 2026-08-08, and this POST form shape (the one it had
-// supposedly stopped routing on 2026-07-30) is what a live session needed.
-// Pin the shape that's currently verified working, not a guess.
-test('showMany asks with a form body, not a query string', async () => {
-  const request = await requestFor('showMany', { userIds: ['1', '2', '3'] });
+// Instagram has flipped which shape this one endpoint routes three times in
+// three weeks (POST form → GET query 2026-07-30 → POST form 2026-08-08 → GET
+// query 2026-08-15), each flip costing a release. These tests pin the
+// *fallback*, not a shape: which one is asked first is a preference, and being
+// wrong about it must cost one request rather than a broken panel.
+const SHOW_MANY = 'https://www.instagram.com/api/v1/friendships/show_many/';
 
-  assert.equal(request.init.method, 'POST');
-  assert.equal(request.url, 'https://www.instagram.com/api/v1/friendships/show_many/');
-  assert.equal(request.init.body, 'user_ids=1,2,3');
-  assert.equal(request.init.headers['Content-Type'], 'application/x-www-form-urlencoded');
+const statuses = (status = 200) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  url: SHOW_MANY,
+  text: async () => JSON.stringify({ friendship_statuses: { 1: { following: false } } }),
+});
+
+/** Run showMany against a per-attempt responder and hand back every request. */
+async function showMany(response, userIds = ['1', '2', '3']) {
+  const { bridge, calls } = loadContentScript({ cookie: SIGNED_IN, response });
+  const result = await bridge.call('showMany', { userIds });
+  return { result, calls };
+}
+
+test('showMany asks by query string first', async () => {
+  const { calls } = await showMany(() => statuses());
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.method, 'GET');
+  assert.equal(calls[0].url, `${SHOW_MANY}?user_ids=1,2,3`);
+});
+
+test('a web page in answer to one shape is retried as the other, not surfaced', async () => {
+  const { result, calls } = await showMany((index) =>
+    index === 0 ? pageResponse(200, SHOW_MANY) : statuses());
+
+  assert.equal(result.ok, true, 'the fallback shape answered, so the call succeeded');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].init.method, 'POST');
+  assert.equal(calls[1].url, SHOW_MANY);
+  assert.equal(calls[1].init.body, 'user_ids=1,2,3');
+  assert.equal(calls[1].init.headers['Content-Type'], 'application/x-www-form-urlencoded');
+});
+
+test('a 405 falls back too — the other flip answered exactly that way', async () => {
+  const { result, calls } = await showMany((index) =>
+    index === 0 ? jsonResponse(405, { message: 'Method not allowed' }, SHOW_MANY) : statuses());
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 2);
+});
+
+// The whole extension is serialised to hold one request rate Instagram doesn't
+// publish. Retrying a throttle in a second shape doubles the rate at the exact
+// moment it is already too high, so only a shape *refusal* may cost a request.
+test('a rate limit is never retried in the other shape', async () => {
+  const { result, calls } = await showMany(() => jsonResponse(429, { message: 'rate_limited' }, SHOW_MANY));
+
+  assert.equal(calls.length, 1, 'a throttle must cost one request, not two');
+  assert.equal(result.blocked, true);
+  assert.equal(result.reason, 'rate_limited');
+});
+
+test('a sign-out is never retried in the other shape either', async () => {
+  const { bridge, calls } = loadContentScript({
+    cookie: '',
+    response: jsonResponse(401, { message: 'login_required' }, SHOW_MANY),
+  });
+  const result = await bridge.call('showMany', { userIds: ['1'] });
+
+  assert.equal(calls.length, 1);
+  assert.equal(result.reason, 'signed_out');
+});
+
+test('the shape that answered is remembered, so a flip costs one request per page', async () => {
+  const { bridge, calls } = loadContentScript({
+    cookie: SIGNED_IN,
+    response: (index) => (index === 0 ? pageResponse(200, SHOW_MANY) : statuses()),
+  });
+
+  await bridge.call('showMany', { userIds: ['1'] });
+  await bridge.call('showMany', { userIds: ['2'] });
+  await bridge.call('showMany', { userIds: ['3'] });
+
+  assert.equal(calls.length, 4, 'one probe, then the learned shape for every call after');
+  for (const request of calls.slice(1)) assert.equal(request.init.method, 'POST');
+});
+
+test('both shapes refused reports the failure, and halts as it always did', async () => {
+  const { result, calls } = await showMany(() => pageResponse(200, SHOW_MANY));
+
+  assert.equal(calls.length, 2, 'two shapes, two requests, then stop');
+  assert.equal(result.ok, false);
+  assert.equal(result.blocked, true);
+  assert.equal(result.reason, 'html_response');
+  assert.equal(result.bodyLength > 0, true, 'the (i) still has the response to show');
 });
 
 test('the write endpoints stay POSTs under /web/', async () => {

@@ -152,7 +152,7 @@ same-origin from the content script.
 | op | Request | Yields |
 |---|---|---|
 | `pending` | `GET /friendships/pending/` | `users[]`: `pk` (string), `username`, `full_name`, `profile_pic_url`, `is_private`, `is_verified`, `social_context`, `has_anonymous_profile_picture`. Capped at 200, no pagination. |
-| `showMany` | `POST /friendships/show_many/`, body `user_ids=a,b,c` (100 max) | `friendship_statuses{id: {following, incoming_request, is_private, is_restricted, is_bestie, outgoing_request, is_feed_favorite}}` |
+| `showMany` | `GET /friendships/show_many/?user_ids=a,b,c` **or** `POST` with that as a form body (100 max) — Instagram routes one or the other and has switched three times; `content.js` `SHOW_MANY_SHAPES` tries both rather than naming one | `friendship_statuses{id: {following, incoming_request, is_private, is_restricted, is_bestie, outgoing_request, is_feed_favorite}}` |
 | `profile` | `GET /users/web_profile_info/?username=X` | `edge_followed_by.count`, `edge_follow.count`, `edge_owner_to_timeline_media.count`, `edge_mutual_followed_by.{count, edges[].node.username}`, `biography`, `is_private`, `is_verified` |
 | `approve` | `POST /web/friendships/{pk}/approve/` | — |
 | `ignore` | `POST /web/friendships/{pk}/ignore/` | — |

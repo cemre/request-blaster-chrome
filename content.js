@@ -218,6 +218,58 @@ const API_ROOT = 'https://www.instagram.com/api/v1';
 window.__requestBlaster = window.__requestBlaster || {};
 const OPERATIONS = window.__requestBlaster.ops || (window.__requestBlaster.ops = {});
 
+// The two shapes `friendships/show_many/` has been observed to route, and the
+// only place either is written down. First here is asked first — keep the one
+// most recently seen working in front, so the common case costs one request.
+const SHOW_MANY_SHAPES = [
+  ['query', (userIds) => [
+    `${API_ROOT}/friendships/show_many/?user_ids=${userIds.join(',')}`,
+    { method: 'GET' },
+  ]],
+  ['form', (userIds) => [
+    `${API_ROOT}/friendships/show_many/`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `user_ids=${userIds.join(',')}`,
+    },
+  ]],
+];
+
+/**
+ * The shape that last answered, in front. Held on the bridge rather than in a
+ * module variable for the same reason the operation table is — this file is
+ * injected twice and both executions should learn from one probe.
+ *
+ * Nothing clears it: it is only ever set from a success, and a learned shape
+ * that later stops routing simply falls through to the other one and is
+ * replaced. That is what makes a flip mid-session cost one request too, not
+ * just a flip between sessions.
+ */
+function orderedShapes() {
+  const learned = window.__requestBlaster.showManyShape;
+  return [
+    ...SHOW_MANY_SHAPES.filter(([name]) => name === learned),
+    ...SHOW_MANY_SHAPES.filter(([name]) => name !== learned),
+  ];
+}
+
+/**
+ * Instagram declining to route the *shape*, as opposed to answering the call.
+ *
+ * Both flips presented as exactly one of these two: HTTP 405, or an HTTP 200
+ * carrying ~600KB of the logged-in web app shell — which `htmlResponse` has
+ * already told apart from a real sign-out, on the cookie, before this sees it.
+ *
+ * This predicate is the one thing keeping the fallback honest. Everything else
+ * — a throttle, a challenge, a dead session — is an answer, and retrying an
+ * answer in a second shape would double the request rate at the exact moment
+ * Instagram is saying it is already too high.
+ */
+function wrongShape(result) {
+  return result.status === 405 || result.reason === 'html_response';
+}
+
 Object.assign(OPERATIONS, {
   pending({ maxId }) {
     const url = maxId
@@ -226,18 +278,32 @@ Object.assign(OPERATIONS, {
     return igFetch(url, { method: 'GET' });
   },
 
-  // POST with a form body. Instagram flipped this endpoint back: the GET-with-
-  // query-string shape from 2026-07-30 now answers HTTP 405, while this POST
-  // shape — the one that was retired that day for allegedly no longer routing —
-  // answers 200 with `friendship_statuses` again, verified 2026-08-08 against a
-  // live signed-in session. Whatever Instagram accepts here has flipped at least
-  // once already, so don't assume today's shape is permanent.
-  showMany({ userIds }) {
-    return igFetch(`${API_ROOT}/friendships/show_many/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `user_ids=${userIds.join(',')}`,
-    });
+  /**
+   * Ask in whichever shape answers, rather than in the one that answered last
+   * time. `show_many` is the only endpoint here whose accepted request shape
+   * Instagram keeps changing — POST + form body until 2026-07-30, GET + query
+   * string until 2026-08-08, POST again until 2026-08-15 — and each flip broke
+   * follow status for everyone until a release went out. Three releases in three
+   * weeks spent pinning a shape is what this replaces: the endpoint's shape is
+   * not a fact about Instagram to be looked up, it is a property of whatever
+   * server answered, so it gets discovered per session instead of encoded.
+   *
+   * The order in SHOW_MANY_SHAPES is a preference, not a pin. Being wrong about
+   * it costs one request, once per page, and never a broken panel.
+   */
+  async showMany({ userIds }) {
+    let result;
+    for (const [name, build] of orderedShapes()) {
+      result = await igFetch(...build(userIds));
+      if (result.ok) {
+        window.__requestBlaster.showManyShape = name;
+        return result;
+      }
+      // An answer, not a refusal to route. Stop: asking again in another shape
+      // would spend a second request to be told the same thing.
+      if (!wrongShape(result)) return result;
+    }
+    return result;
   },
 
   profile({ username }) {
